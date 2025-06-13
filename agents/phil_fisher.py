@@ -34,7 +34,7 @@ def phil_fisher_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("phil_fisher_agent", ticker, "Fetching crypto metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        metrics = get_financial_metrics(ticker, end_date)
         if not metrics:
             continue
 

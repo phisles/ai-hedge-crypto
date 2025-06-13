@@ -27,6 +27,7 @@ load_dotenv()
 sys.path.append("/root/stock2")
 
 from config2 import GEM_API_KEY, GEM_API_SECRET  # Use your Gemini keys
+from tools.api import COINGECKO_IDS
 
 init(autoreset=True)
 TESTING_MODE = False  # Set to False in production
@@ -171,6 +172,7 @@ if __name__ == "__main__":
     # Configuration
     #tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOT/USD"]
     tickers = ["BTC/USD", "ETH/USD"]
+    #tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
     
     
     #LIVE

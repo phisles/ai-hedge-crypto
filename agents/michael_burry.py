@@ -55,7 +55,7 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
     for ticker in tickers:
         # Fetch metrics
         progress.update_status("michael_burry_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5)
+        metrics = get_financial_metrics(ticker, end_date)
 
         # —— CRYPTO BRANCH START —— 
         if ticker.upper().endswith(("/USD", "-USD")) and metrics:

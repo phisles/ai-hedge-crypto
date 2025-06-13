@@ -1,5 +1,6 @@
 from langchain_core.messages import HumanMessage
 from graph.state import AgentState, show_agent_reasoning
+from tools.api import get_historical_metrics  # <-- make sure this import is added at top
 from utils.progress import progress
 import json
 
@@ -16,12 +17,7 @@ def fundamentals_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("fundamentals_agent", ticker, "Fetching financial metrics")
-        financial_metrics = get_financial_metrics(
-            ticker=ticker,
-            end_date=end_date,
-            period="ttm",
-            limit=10,
-        )
+        financial_metrics = [get_historical_metrics(ticker, end_date)]
         if not financial_metrics:
             progress.update_status("fundamentals_agent", ticker, "Failed: No financial metrics found")
             continue

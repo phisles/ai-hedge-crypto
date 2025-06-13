@@ -30,17 +30,34 @@ from data.models import (
 )
 
 COINGECKO_IDS = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "DOGE": "dogecoin",
-    "ADA": "cardano",
+    "AAVE": "aave",
+    "APE": "apecoin",
+    "ATOM": "cosmos",
     "AVAX": "avalanche-2",
-    "LINK": "chainlink",
-    "MATIC": "polygon",
-    "LTC": "litecoin",
     "BCH": "bitcoin-cash",
-    # Add more as needed
+    "BTC": "bitcoin",
+    "COMP": "compound-governance-token",
+    "CRV": "curve-dao-token",
+    "DAI": "dai",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "ETH": "ethereum",
+    "FIL": "filecoin",
+    "LINK": "chainlink",
+    "LTC": "litecoin",
+    "MANA": "decentraland",
+    "MATIC": "polygon",
+    "MKR": "maker",
+    "QNT": "quant-network",
+    "SAND": "the-sandbox",
+    "SHIB": "shiba-inu",
+    "SOL": "solana",
+    "SUSHI": "sushi",
+    "UNI": "uniswap",
+    "XRP": "ripple",
+    "XTZ": "tezos",
+    "YFI": "yearn-finance",
+    "ZEC": "zcash",
 }
 
 # Global cache instance
@@ -108,17 +125,21 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     print(f"📊 Parsed {len(result)} candles from Gemini for {symbol}")
     return result
 
-def get_financial_metrics(ticker: str) -> list[dict]:
+def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     """Return crypto-adapted financial metrics for a given CoinGecko asset ID (e.g., 'bitcoin')."""
     import requests
 
+    # ─── Historical metrics ─────────────────────────────────────────────────────
+    hist_metrics = get_historical_metrics(ticker, end_date)
+
+    # Normalize symbol and lookup CoinGecko ID
     symbol = ticker.upper().replace("/USD", "").replace("-USD", "")
     asset_id = COINGECKO_IDS.get(symbol)
     if not asset_id:
         print(f"⚠️ No CoinGecko ID mapping for {ticker}")
         return []
 
-    # ─── CoinGecko ─────────────────────────────────────────────────────────────────
+    # ─── CoinGecko data ─────────────────────────────────────────────────────────
     cg_url = (
         f"https://api.coingecko.com/api/v3/coins/{asset_id}"
         "?localization=false&tickers=true&market_data=true"
@@ -128,69 +149,66 @@ def get_financial_metrics(ticker: str) -> list[dict]:
     if not cg:
         return []
 
-    # ─── Core metadata ─────────────────────────────────────────────────────────────
-    coin_id             = cg.get("id")
-    coin_symbol         = cg.get("symbol")
-    coin_name           = cg.get("name")
-    web_slug            = cg.get("web_slug")
-    asset_platform_id   = cg.get("asset_platform_id")
-    platforms           = cg.get("platforms")
-    detail_platforms    = cg.get("detail_platforms")
-    hashing_algorithm   = cg.get("hashing_algorithm")
-    block_time_minutes  = cg.get("block_time_in_minutes")
-    categories          = cg.get("categories")
-    country_origin      = cg.get("country_origin")
-    genesis_date        = cg.get("genesis_date")
+    # ─── Core metadata ───────────────────────────────────────────────────────────
+    coin_id           = cg.get("id")
+    coin_symbol       = cg.get("symbol")
+    coin_name         = cg.get("name")
+    web_slug          = cg.get("web_slug")
+    asset_platform_id = cg.get("asset_platform_id")
+    platforms         = cg.get("platforms")
+    detail_platforms  = cg.get("detail_platforms")
+    hashing_algorithm = cg.get("hashing_algorithm")
+    block_time_minutes= cg.get("block_time_in_minutes")
+    categories        = cg.get("categories")
+    country_origin    = cg.get("country_origin")
+    genesis_date      = cg.get("genesis_date")
 
-    # ─── Listing & notices ─────────────────────────────────────────────────────────
-    preview_listing      = cg.get("preview_listing")
-    public_notice        = cg.get("public_notice")
-    additional_notices   = cg.get("additional_notices")
-    localization_map     = cg.get("localization")
+    # ─── Listing & notices ───────────────────────────────────────────────────────
+    preview_listing    = cg.get("preview_listing")
+    public_notice      = cg.get("public_notice")
+    additional_notices = cg.get("additional_notices")
+    localization_map   = cg.get("localization")
 
-    # ─── Descriptions & links ──────────────────────────────────────────────────────
-    description = cg.get("description", {})  # dict with "en", "de", etc.
-    description_en       = description.get("en")
-    description_de       = description.get("de")
-
-    links               = cg.get("links", {}) or {}
-    twitter_handle      = links.get("twitter_screen_name")
-    homepage_urls       = links.get("homepage")
-    whitepaper_url      = links.get("whitepaper")
-    blockchain_sites    = links.get("blockchain_site")
-    official_forum_urls = links.get("official_forum_url")
-    chat_urls           = links.get("chat_url")
-    announcement_urls   = links.get("announcement_url")
-    snapshot_url        = links.get("snapshot_url")
-    subreddit_url       = links.get("subreddit_url")
-
-    repos_url           = links.get("repos_url", {}) or {}
-    repos_url_github    = repos_url.get("github")
-    repos_url_bitbucket = repos_url.get("bitbucket")
-
-    status_updates      = cg.get("status_updates")
-    watchlist_users     = cg.get("watchlist_portfolio_users")
-    market_cap_rank     = cg.get("market_cap_rank")
-    sentiment_up_pct    = cg.get("sentiment_votes_up_percentage")
-    sentiment_down_pct  = cg.get("sentiment_votes_down_percentage")
-    tickers_count       = len(cg.get("tickers", []))
-    last_updated_global = cg.get("last_updated")
+    # ─── Descriptions & links ─────────────────────────────────────────────────────
+    desc = cg.get("description", {}) or {}
+    description_en     = desc.get("en")
+    description_de     = desc.get("de")
+    links              = cg.get("links", {}) or {}
+    twitter_handle     = links.get("twitter_screen_name")
+    homepage_urls      = links.get("homepage")
+    whitepaper_url     = links.get("whitepaper")
+    blockchain_sites   = links.get("blockchain_site")
+    forum_urls         = links.get("official_forum_url")
+    chat_urls          = links.get("chat_url")
+    announcement_urls  = links.get("announcement_url")
+    snapshot_url       = links.get("snapshot_url")
+    subreddit_url      = links.get("subreddit_url")
+    repos = links.get("repos_url", {}) or {}
+    repos_url_github   = repos.get("github")
+    repos_url_bitbucket= repos.get("bitbucket")
+    status_updates     = cg.get("status_updates")
+    watchlist_users    = cg.get("watchlist_portfolio_users")
+    market_cap_rank    = cg.get("market_cap_rank")
+    sentiment_up_pct   = cg.get("sentiment_votes_up_percentage")
+    sentiment_down_pct = cg.get("sentiment_votes_down_percentage")
+    tickers_count      = len(cg.get("tickers", []))
+    last_updated_global= cg.get("last_updated")
 
     # ─── Market data ─────────────────────────────────────────────────────────────
-    md = cg.get("market_data", {}) or {}
-    market_cap    = md.get("market_cap", {}).get("usd")
-    current_price = md.get("current_price", {}).get("usd")
-    volume_24h    = md.get("total_volume", {}).get("usd")
-    circulating   = md.get("circulating_supply")
-    total_supply  = md.get("total_supply")
-    max_supply    = md.get("max_supply")
-    fdv           = md.get("fully_diluted_valuation", {}).get("usd")
+    md               = cg.get("market_data", {}) or {}
+    market_cap       = md.get("market_cap", {}).get("usd")
+    current_price    = md.get("current_price", {}).get("usd")
+    volume_24h       = md.get("total_volume", {}).get("usd")
+    circulating      = md.get("circulating_supply")
+    total_supply     = md.get("total_supply")
+    max_supply       = md.get("max_supply")
+    fdv              = md.get("fully_diluted_valuation", {}).get("usd")
 
-    # ─── Price change percentages ─────────────────────────────────────────────────
+    # ─── Price change percentages ────────────────────────────────────────────────
     pct_24h  = md.get("price_change_percentage_24h")
     pct_7d   = md.get("price_change_percentage_7d")
     pct_14d  = md.get("price_change_percentage_14d")
-    pct_30d  = md.get("price_change_percentage_30d")
+    pct_30d  = hist_metrics.get("price_change_pct_30d", md.get("price_change_percentage_30d"))
     pct_60d  = md.get("price_change_percentage_60d")
     pct_200d = md.get("price_change_percentage_200d")
     pct_1y   = md.get("price_change_percentage_1y")
@@ -207,82 +225,76 @@ def get_financial_metrics(ticker: str) -> list[dict]:
     public_interest_score = cg.get("public_interest_score")
 
     # ─── Public interest stats ────────────────────────────────────────────────────
-    pis            = cg.get("public_interest_stats", {}) or {}
-    alexa_rank     = pis.get("alexa_rank")
-    bing_matches   = pis.get("bing_matches")
+    pis                  = cg.get("public_interest_stats", {}) or {}
+    alexa_rank           = pis.get("alexa_rank")
+    bing_matches         = pis.get("bing_matches")
 
     # ─── ROI ───────────────────────────────────────────────────────────────────────
-    roi          = cg.get("roi", {}) or {}
-    roi_times    = roi.get("times")
-    roi_currency = roi.get("currency")
-    roi_pct      = roi.get("percentage")
+    roi                  = cg.get("roi", {}) or {}
+    roi_times            = roi.get("times")
+    roi_currency         = roi.get("currency")
+    roi_pct              = roi.get("percentage")
 
     # ─── Developer data ───────────────────────────────────────────────────────────
-    dev_data            = cg.get("developer_data", {}) or {}
-    dev_forks           = dev_data.get("forks")
-    dev_stars           = dev_data.get("stars")
-    dev_subscribers     = dev_data.get("subscribers")
-    dev_total_issues    = dev_data.get("total_issues")
-    dev_closed_issues   = dev_data.get("closed_issues")
-    dev_pr_merged       = dev_data.get("pull_requests_merged")
-    pr_contributors     = dev_data.get("pull_request_contributors")
-    code_changes_4w     = dev_data.get("code_additions_deletions_4_weeks", {}) or {}
-    additions_4w        = code_changes_4w.get("additions")
-    deletions_4w        = code_changes_4w.get("deletions")
-    activity_series_4w  = dev_data.get("last_4_weeks_commit_activity_series", [])
+    dev                  = cg.get("developer_data", {}) or {}
+    dev_forks            = dev.get("forks")
+    dev_stars            = dev.get("stars")
+    dev_subscribers      = dev.get("subscribers")
+    dev_total_issues     = dev.get("total_issues")
+    dev_closed_issues    = dev.get("closed_issues")
+    dev_pr_merged        = dev.get("pull_requests_merged")
+    pr_contributors      = dev.get("pull_request_contributors")
+    changes_4w           = dev.get("code_additions_deletions_4_weeks", {}) or {}
+    additions_4w         = changes_4w.get("additions")
+    deletions_4w         = changes_4w.get("deletions")
+    activity_series_4w   = dev.get("last_4_weeks_commit_activity_series", [])
 
     # ─── Community data ───────────────────────────────────────────────────────────
-    comm_data                 = cg.get("community_data", {}) or {}
-    facebook_likes            = comm_data.get("facebook_likes")
-    twitter_followers         = comm_data.get("twitter_followers")
-    reddit_subscribers        = comm_data.get("reddit_subscribers")
-    reddit_posts_48h          = comm_data.get("reddit_average_posts_48h")
-    reddit_comments_48h       = comm_data.get("reddit_average_comments_48h")
-    reddit_accounts_active_48h= comm_data.get("reddit_accounts_active_48h")
-    telegram_channel_user_count = comm_data.get("telegram_channel_user_count")
+    comm                 = cg.get("community_data", {}) or {}
+    facebook_likes       = comm.get("facebook_likes")
+    twitter_followers    = comm.get("twitter_followers")
+    reddit_subscribers   = comm.get("reddit_subscribers")
+    reddit_posts_48h     = comm.get("reddit_average_posts_48h")
+    reddit_comments_48h  = comm.get("reddit_average_comments_48h")
+    reddit_active_48h    = comm.get("reddit_accounts_active_48h")
+    telegram_user_count  = comm.get("telegram_channel_user_count")
 
     # ─── Primary ticker & conversions ─────────────────────────────────────────────
-    primary_ticker               = (cg.get("tickers") or [{}])[0] or {}
-    primary_last                 = primary_ticker.get("last")
-    primary_volume               = primary_ticker.get("volume")
-    primary_trust_score          = primary_ticker.get("trust_score")
-    primary_spread_pct           = primary_ticker.get("bid_ask_spread_percentage")
-
-    converted_last   = primary_ticker.get("converted_last", {}) or {}
-    converted_volume = primary_ticker.get("converted_volume", {}) or {}
-    conv_last_usd    = converted_last.get("usd")
-    conv_last_btc    = converted_last.get("btc")
-    conv_last_eth    = converted_last.get("eth")
-    conv_vol_usd     = converted_volume.get("usd")
-    conv_vol_btc     = converted_volume.get("btc")
-    conv_vol_eth     = converted_volume.get("eth")
+    primary = (cg.get("tickers") or [{}])[0] or {}
+    primary_last          = primary.get("last")
+    primary_volume        = primary.get("volume")
+    primary_trust_score   = primary.get("trust_score")
+    primary_spread_pct    = primary.get("bid_ask_spread_percentage")
+    conv                  = primary.get("converted_last", {}) or {}
+    conv_last_usd         = conv.get("usd")
+    conv_last_btc         = conv.get("btc")
+    conv_last_eth         = conv.get("eth")
+    conv_vol              = primary.get("converted_volume", {}) or {}
+    conv_vol_usd          = conv_vol.get("usd")
+    conv_vol_btc          = conv_vol.get("btc")
+    conv_vol_eth          = conv_vol.get("eth")
 
     # ─── Gemini pubticker ───────────────────────────────────────────────────────────
     gem_symbol = f"{symbol.lower()}usd"
-    gem = requests.get(f"https://api.gemini.com/v1/pubticker/{gem_symbol}").json()
-    bid    = float(gem.get("bid", 0))
-    ask    = float(gem.get("ask", 0))
-    last   = float(gem.get("last", 0))
-    mid    = float(gem.get("mid", (bid + ask) / 2))
-    spread = ask - bid
+    gem       = requests.get(f"https://api.gemini.com/v1/pubticker/{gem_symbol}").json()
+    bid       = float(gem.get("bid", 0))
+    ask       = float(gem.get("ask", 0))
+    last      = float(gem.get("last", 0))
+    mid       = float(gem.get("mid", (bid + ask) / 2))
+    spread    = ask - bid
 
     # ─── Gemini order book & trades ────────────────────────────────────────────────
-    book         = requests.get(
-        f"https://api.gemini.com/v1/book/{gem_symbol}?limit_bids=25&limit_asks=25"
-    ).json()
-    top_bids     = book["bids"][:5]
-    top_asks     = book["asks"][:5]
-    trades       = requests.get(
-        f"https://api.gemini.com/v1/trades/{gem_symbol}?limit_trades=500"
-    ).json()
-    trade_count  = len(trades)
-    avg_trade_size = (
-        sum(float(t["amount"]) for t in trades) / trade_count
-        if trade_count else None
-    )
+    book       = requests.get(
+                    f"https://api.gemini.com/v1/book/{gem_symbol}?limit_bids=25&limit_asks=25"
+                 ).json()
+    top_bids   = book["bids"][:5]
+    top_asks   = book["asks"][:5]
+    trades     = requests.get(f"https://api.gemini.com/v1/trades/{gem_symbol}?limit_trades=500").json()
+    trade_count    = len(trades)
+    avg_trade_size = (sum(float(t["amount"]) for t in trades) / trade_count) if trade_count else None
 
-    # ─── Gemini 1-day latest candle via v2 ─────────────────────────────────────────
-    v2_url      = f"https://api.gemini.com/v2/candles/{gem_symbol}/1day"
+    # ─── Gemini 1-day candle via v2 ────────────────────────────────────────────────
+    v2_url = f"https://api.gemini.com/v2/candles/{gem_symbol}/1day"
     daily_open = daily_high = daily_low = daily_close = daily_volume = None
     try:
         resp = requests.get(v2_url)
@@ -294,132 +306,115 @@ def get_financial_metrics(ticker: str) -> list[dict]:
         print(f"⚠️ Failed to fetch Gemini v2 candle for {gem_symbol}: {e}")
 
     return [{
-        "ticker":                    ticker.upper(),
-        "report_period":             "latest",
-        "period":                    "ttm",
-        "currency":                  "USD",
-
-        # CoinGecko metadata
-        "coin_id":                   coin_id,
-        "symbol":                    coin_symbol,
-        "name":                      coin_name,
-
-
-        "platforms":                 platforms,
-        "detail_platforms":          detail_platforms,
-        "hashing_algorithm":         hashing_algorithm,
-        "block_time_minutes":        block_time_minutes,
-        "categories":                categories,
-        "country_origin":            country_origin,
-        "genesis_date":              genesis_date,
-        "preview_listing":           preview_listing,
-        "public_notice":             public_notice,
-        "additional_notices":        additional_notices,
-        "localization":              localization_map,
-        "status_updates":            status_updates,
-        "watchlist_portfolio_users": watchlist_users,
-        "market_cap_rank":           market_cap_rank,
-        "sentiment_votes_up_pct":    sentiment_up_pct,
-        "sentiment_votes_down_pct":  sentiment_down_pct,
-        "tickers_count":             tickers_count,
-        "last_updated_global":       last_updated_global,
-
+        "ticker":                      ticker.upper(),
+        "report_period":               "latest",
+        "period":                      "ttm",
+        "currency":                    "USD",
+        # CoinGecko core metadata
+        "coin_id":                     coin_id,
+        "symbol":                      coin_symbol,
+        "name":                        coin_name,
+        "platforms":                   platforms,
+        "detail_platforms":            detail_platforms,
+        "hashing_algorithm":           hashing_algorithm,
+        "block_time_minutes":          block_time_minutes,
+        "categories":                  categories,
+        "country_origin":              country_origin,
+        "genesis_date":                genesis_date,
+        "preview_listing":             preview_listing,
+        "public_notice":               public_notice,
+        "additional_notices":          additional_notices,
+        "localization":                localization_map,
+        "status_updates":              status_updates,
+        "watchlist_portfolio_users":   watchlist_users,
+        "market_cap_rank":             market_cap_rank,
+        "sentiment_votes_up_pct":      sentiment_up_pct,
+        "sentiment_votes_down_pct":    sentiment_down_pct,
+        "tickers_count":               tickers_count,
+        "last_updated_global":         last_updated_global,
         # Market data
-        "market_cap":                market_cap,
-        "fully_diluted_valuation":   fdv or market_cap,
-        "current_price":             current_price,
-        "volume_24h":                volume_24h,
-        "circulating_supply":        circulating,
-        "total_supply":              total_supply,
-        "max_supply":                max_supply,
-
+        "market_cap":                  market_cap,
+        "fully_diluted_valuation":     fdv or market_cap,
+        "current_price":               current_price,
+        "volume_24h":                  volume_24h,
+        "circulating_supply":          circulating,
+        "total_supply":                total_supply,
+        "max_supply":                  max_supply,
         # Price change %
-        "price_change_pct_24h":      pct_24h,
-        "price_change_pct_7d":       pct_7d,
-        "price_change_pct_14d":      pct_14d,
-        "price_change_pct_30d":      pct_30d,
-        "price_change_pct_60d":      pct_60d,
-        "price_change_pct_200d":     pct_200d,
-        "price_change_pct_1y":       pct_1y,
-
+        "price_change_pct_24h":        pct_24h,
+        "price_change_pct_7d":         pct_7d,
+        "price_change_pct_14d":        pct_14d,
+        "price_change_pct_30d":        pct_30d,
+        "price_change_pct_60d":        pct_60d,
+        "price_change_pct_200d":       pct_200d,
+        "price_change_pct_1y":         pct_1y,
         # ATH/ATL
-        "ath":                       ath,
-        "ath_date":                  ath_date,
-        "atl":                       atl,
-        "atl_date":                  atl_date,
-
+        "ath":                         ath,
+        "ath_date":                    ath_date,
+        "atl":                         atl,
+        "atl_date":                    atl_date,
         # Advanced scores
-        "coingecko_score":           coingecko_score,
-        "liquidity_score":           liquidity_score,
-        "public_interest_score":     public_interest_score,
-
+        "coingecko_score":             coingecko_score,
+        "liquidity_score":             liquidity_score,
+        "public_interest_score":       public_interest_score,
         # Public interest stats
-        "alexa_rank":                alexa_rank,
-        "bing_matches":              bing_matches,
-
+        "alexa_rank":                  alexa_rank,
+        "bing_matches":                bing_matches,
         # ROI
-        "roi_times":                 roi_times,
-        "roi_currency":              roi_currency,
-        "roi_percentage":            roi_pct,
-
+        "roi_times":                   roi_times,
+        "roi_currency":                roi_currency,
+        "roi_percentage":              roi_pct,
         # Developer data
-        "developer_forks":           dev_forks,
-        "developer_stars":           dev_stars,
-        "developer_subscribers":     dev_subscribers,
-        "developer_total_issues":    dev_total_issues,
-        "developer_closed_issues":   dev_closed_issues,
-        "developer_pr_merged":       dev_pr_merged,
-        "pr_contributors":           pr_contributors,
-        "code_additions_4_weeks":    additions_4w,
-        "code_deletions_4_weeks":    deletions_4w,
-        "activity_series_4_weeks":   activity_series_4w,
-
+        "developer_forks":             dev_forks,
+        "developer_stars":             dev_stars,
+        "developer_subscribers":       dev_subscribers,
+        "developer_total_issues":      dev_total_issues,
+        "developer_closed_issues":     dev_closed_issues,
+        "developer_pr_merged":         dev_pr_merged,
+        "pr_contributors":             pr_contributors,
+        "code_additions_4_weeks":      additions_4w,
+        "code_deletions_4_weeks":      deletions_4w,
+        "activity_series_4_weeks":     activity_series_4w,
         # Community data
-        "facebook_likes":            facebook_likes,
-        "twitter_followers":         twitter_followers,
-        "reddit_subscribers":        reddit_subscribers,
-        "reddit_posts_48h":          reddit_posts_48h,
-        "reddit_comments_48h":       reddit_comments_48h,
-        "reddit_accounts_active_48h": reddit_accounts_active_48h,
-        "telegram_channel_user_count": telegram_channel_user_count,
-
+        "facebook_likes":              facebook_likes,
+        "twitter_followers":           twitter_followers,
+        "reddit_subscribers":          reddit_subscribers,
+        "reddit_posts_48h":            reddit_posts_48h,
+        "reddit_comments_48h":         reddit_comments_48h,
+        "reddit_accounts_active_48h":  reddit_active_48h,
+        "telegram_channel_user_count": telegram_user_count,
         # Primary ticker & conversions
-        "primary_last":              primary_last,
-        "primary_volume":            primary_volume,
-        "primary_trust_score":       primary_trust_score,
-        "primary_bid_ask_spread_pct": primary_spread_pct,
-        "converted_last_usd":        conv_last_usd,
-        "converted_last_btc":        conv_last_btc,
-        "converted_last_eth":        conv_last_eth,
-        "converted_volume_usd":      conv_vol_usd,
-        "converted_volume_btc":      conv_vol_btc,
-        "converted_volume_eth":      conv_vol_eth,
-
+        "primary_last":                primary_last,
+        "primary_volume":              primary_volume,
+        "primary_trust_score":         primary_trust_score,
+        "primary_bid_ask_spread_pct":  primary_spread_pct,
+        "converted_last_usd":          conv_last_usd,
+        "converted_last_btc":          conv_last_btc,
+        "converted_last_eth":          conv_last_eth,
+        "converted_volume_usd":        conv_vol_usd,
+        "converted_volume_btc":        conv_vol_btc,
+        "converted_volume_eth":        conv_vol_eth,
         # Gemini pubticker
-        "gemini_bid":                bid,
-        "gemini_ask":                ask,
-        "gemini_last":               last,
-        "gemini_mid_price":          mid,
-        "gemini_spread":             spread,
-
+        "gemini_bid":                  bid,
+        "gemini_ask":                  ask,
+        "gemini_last":                 last,
+        "gemini_mid_price":            mid,
+        "gemini_spread":               spread,
         # Gemini book & trades
-        "gemini_top_bids":           top_bids,
-        "gemini_top_asks":           top_asks,
-        "gemini_trade_count":        trade_count,
-        "gemini_avg_trade_size":     avg_trade_size,
-
+        "gemini_top_bids":             top_bids,
+        "gemini_top_asks":             top_asks,
+        "gemini_trade_count":          trade_count,
+        "gemini_avg_trade_size":       avg_trade_size,
         # Gemini daily candle (v2)
-        "gemini_daily_open":         daily_open,
-        "gemini_daily_high":         daily_high,
-        "gemini_daily_low":          daily_low,
-        "gemini_daily_close":        daily_close,
-        "gemini_daily_volume":       daily_volume,
-
-        # Derived ratios
+        "gemini_daily_open":           daily_open,
+        "gemini_daily_high":           daily_high,
+        "gemini_daily_low":            daily_low,
+        "gemini_daily_close":          daily_close,
+        "gemini_daily_volume":         daily_volume,
+        # Derived ratios (with historical override)
         "price_to_sales_ratio":            market_cap / volume_24h if market_cap and volume_24h else None,
         "enterprise_value_to_revenue_ratio": ((fdv or market_cap) / volume_24h) if volume_24h else None,
-        "volume_to_market_cap":            volume_24h / market_cap if market_cap and volume_24h else None,
-
+        "volume_to_market_cap":            hist_metrics.get("volume_to_market_cap", (volume_24h / market_cap if market_cap and volume_24h else None)),
         # Placeholders for non-applicable metrics
         "price_to_earnings_ratio":          "not applicable to crypto",
         "price_to_book_ratio":              "not applicable to crypto",
@@ -500,6 +495,34 @@ def search_line_items(
         print(f"❌ Gemini fetch failed for {ticker}: {e}")
         return []
 
+def get_historical_metrics(ticker: str, end_date: str) -> dict:
+    """Construct crypto financial metrics using historical Gemini price/volume with retry."""
+    from time import sleep
+    from datetime import datetime, timedelta
+
+    start_30d = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        prices = get_prices(ticker, start_30d, end_date)
+        if prices:
+            break
+        wait = 2 ** attempt
+        print(f"⏳ get_prices() failed for {ticker}. Retrying in {wait}s (attempt {attempt}/{max_retries})...")
+        sleep(wait)
+    else:
+        print(f"❌ get_prices() failed for {ticker} after {max_retries} retries.")
+        return {}
+
+    df = prices_to_df(prices)
+    pct_30d = (df["close"].iloc[-1] / df["close"].iloc[0] - 1) if len(df) > 1 else 0.0
+    volume_to_market_cap = df["volume"].mean() / (df["close"].mean() * 1_000_000)
+
+    return {
+        "price_change_pct_30d": pct_30d,
+        "volume_to_market_cap": volume_to_market_cap,
+        "sentiment_votes_up_pct": 50.0  # placeholder
+    }
 
 def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[InsiderTrade]:
     """Use Blockchair BTC transaction data to simulate whale trades (free)."""
@@ -511,7 +534,7 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
         print(f"⚠️ Blockchair free API only supports BTC for this function. Skipping {ticker}")
         return []
 
-    def get_with_backoff(url, params=None, headers=None, max_retries=2, timeout=10):
+    def get_with_backoff(url, params=None, headers=None, max_retries=1, timeout=1):
         delay = 2
         for attempt in range(1, max_retries + 1):
             try:
@@ -684,9 +707,7 @@ def get_company_news(
 
 
 def get_market_cap(ticker: str, end_date: str) -> float | None:
-    """Fetch market cap using CoinGecko public API."""
-    import requests
-
+    """Fetch market cap using CoinGecko public API, with retry on rate-limit."""
     base = ticker.upper().replace("/USD", "").replace("-USD", "")
     coingecko_id = COINGECKO_IDS.get(base)
 
@@ -695,19 +716,12 @@ def get_market_cap(ticker: str, end_date: str) -> float | None:
         return None
 
     url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}"
-
-    try:
-        response = requests.get(url)
-        if response.status_code != 200:
-            print(f"⚠️ CoinGecko error for {ticker}: {response.status_code} - {response.text}")
-            return None
-
-        data = response.json()
-        market_cap = data.get("market_data", {}).get("market_cap", {}).get("usd")
-        return float(market_cap) if market_cap else None
-    except Exception as e:
-        print(f"⚠️ Exception fetching CoinGecko market cap for {ticker}: {e}")
+    cg = fetch_with_retry(url, max_retries=5, delay=30)
+    if not cg:
         return None
+
+    market_cap = cg.get("market_data", {}).get("market_cap", {}).get("usd")
+    return float(market_cap) if market_cap else None
 
 
 def prices_to_df(prices: list[Price]) -> pd.DataFrame:
@@ -728,7 +742,7 @@ def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     return prices_to_df(prices)
 
 # --- TEST BLOCK (comment out after use) ---
-
+"""
 ticker = "BTC/USD"
 start_date = "2025-06-12"
 end_date = "2025-06-12"
@@ -757,3 +771,4 @@ print([n.model_dump() for n in news[:MAX_ITEMS]])
 
 print("\n=== get_market_cap ===")
 print(get_market_cap(ticker, end_date))
+"""

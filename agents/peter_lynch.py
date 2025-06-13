@@ -38,7 +38,7 @@ def peter_lynch_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("peter_lynch_agent", ticker, "Fetching metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        metrics = get_financial_metrics(ticker, end_date)
         if not metrics:
             continue
 

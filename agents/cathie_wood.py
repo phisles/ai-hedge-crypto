@@ -27,7 +27,7 @@ def cathie_wood_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("cathie_wood_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        metrics = get_financial_metrics(ticker, end_date)
 
         progress.update_status("cathie_wood_agent", ticker, "Gathering financial line items")
         if ticker.upper().endswith(("/USD", "-USD")):

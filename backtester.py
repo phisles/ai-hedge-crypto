@@ -314,7 +314,9 @@ class Backtester:
             get_prices(ticker, start_date_str, self.end_date)
 
             # Fetch financial metrics
-            get_financial_metrics(ticker, self.end_date, limit=10)
+            from tools.api import get_historical_metrics  # make sure this is imported
+
+            get_historical_metrics(ticker, self.end_date)
 
             # Fetch insider trades
             get_insider_trades(ticker, self.end_date, start_date=self.start_date, limit=1000)

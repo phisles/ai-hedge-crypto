@@ -27,8 +27,8 @@ def charlie_munger_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("charlie_munger_agent", ticker, "Fetching crypto metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)
-
+        metrics = get_financial_metrics(ticker, end_date)
+        
         progress.update_status("charlie_munger_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
 
