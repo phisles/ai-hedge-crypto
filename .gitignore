@@ -1,1 +1,3 @@
 .venv/
+config2.py
+__pycache__/
