@@ -37,7 +37,7 @@ def technical_analyst_agent(state: AgentState):
         prices_df = prices_to_df(prices)
 
         # ─── On-chain network volume ──────────────────────────────────────────────
-        metrics = get_financial_metrics(ticker)
+        metrics = get_financial_metrics(ticker, end_date)
         network_vol = metrics[0].get("total_volume", 0) if isinstance(metrics, list) and metrics else 0
 
         progress.update_status("technical_analyst_agent", ticker, "Calculating trend signals")
@@ -107,7 +107,7 @@ def technical_analyst_agent(state: AgentState):
                 },
             },
         }
-        print(f"📤 Technical Analyst output for {ticker}:\n", json.dumps(technical_analysis[ticker], indent=2))
+        print(f"📤 Technical Analyst output for {ticker}:\n", json.dumps(technical_analysis[ticker], indent=2, default=str))
         progress.update_status("technical_analyst_agent", ticker, "Done")
 
     message = HumanMessage(

@@ -25,7 +25,6 @@ def valuation_agent(state: AgentState):
         crypto_metrics = get_financial_metrics(
             ticker=ticker,
             end_date=end_date,
-            period="ttm",
         )
         if not crypto_metrics:
             progress.update_status("valuation_agent", ticker, "Failed: No on-chain metrics found")
@@ -49,7 +48,6 @@ def valuation_agent(state: AgentState):
                 "working_capital",
             ],
             end_date=end_date,
-            period="ttm",
             limit=2,
         )
 

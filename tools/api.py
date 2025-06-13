@@ -64,25 +64,29 @@ COINGECKO_IDS = {
 # Global cache instance
 _cache = get_cache()
 
-def fetch_with_retry(url, max_retries=5, base_delay=2):
+def fetch_with_retry(url, max_retries=20):
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 429:
-                wait = base_delay * 2 ** (attempt - 1)
-                jitter = random.uniform(0.5, 1.5)
-                delay = wait * jitter
+                if attempt == 1:
+                    delay = random.uniform(80, 95)
+                else:
+                    base = random.uniform(10, 30)
+                    delay = base * (2 ** (attempt - 2))
                 print(f"⏳ CoinGecko rate limit hit. Retrying in {delay:.2f}s (attempt {attempt}/{max_retries})...")
                 time.sleep(delay)
             else:
                 print(f"❌ HTTP {response.status_code} for {url}: {response.text}")
                 break
         except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
-            wait = base_delay * 2 ** (attempt - 1)
-            jitter = random.uniform(0.5, 1.5)
-            delay = wait * jitter
+            if attempt == 1:
+                delay = random.uniform(80, 95)
+            else:
+                base = random.uniform(10, 30)
+                delay = base * (2 ** (attempt - 2))
             print(f"⚠️ Request error (attempt {attempt}/{max_retries}) – {e}. Retrying in {delay:.2f}s...")
             time.sleep(delay)
     print("🛑 Max retries exceeded for CoinGecko.")
@@ -137,9 +141,11 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     return result
 
 def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
+    cache = get_cache()
+    key = f"{ticker}::{end_date}"
     """Return crypto-adapted financial metrics for a given CoinGecko asset ID (e.g., 'bitcoin')."""
     # ─── Check cache ──────────────────────────────────────────────────────────────
-    if cached := _cache.get_financial_metrics(ticker, end_date):
+    if cached := cache.get_financial_metrics(ticker, end_date):
         print(f"📦 Loaded cached financial metrics for {ticker}")
         return cached
 
@@ -161,9 +167,26 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         "?localization=false&tickers=true&market_data=true"
         "&community_data=true&developer_data=true&sparkline=false"
     )
-    cg = fetch_with_retry(cg_url)
+    cg = get_cached_coingecko_data(asset_id)
     if not cg:
         return []
+
+    market_data = cg.get("market_data", {})
+    data = [{
+        "ticker": ticker,
+        "report_period": "latest",
+        "period": "ttm",
+        "currency": "USD",
+        "market_cap": market_data.get("market_cap", {}).get("usd"),
+        "price_to_sales_ratio": market_data.get("market_cap", {}).get("usd") / market_data.get("total_volume", {}).get("usd", 1) if market_data.get("total_volume", {}).get("usd") else None,
+        "current_price": market_data.get("current_price", {}).get("usd"),
+        "ath": market_data.get("ath", {}).get("usd"),
+        "volume_24h": market_data.get("total_volume", {}).get("usd"),
+        "volume_to_market_cap": market_data.get("total_volume", {}).get("usd", 0) / market_data.get("market_cap", {}).get("usd", 1) if market_data.get("market_cap", {}).get("usd") else None,
+        "price_change_pct_60d": market_data.get("price_change_percentage_60d_in_currency", {}).get("usd"),
+        "price_change_pct_200d": market_data.get("price_change_percentage_200d_in_currency", {}).get("usd"),
+        "price_change_pct_1y": market_data.get("price_change_percentage_1y_in_currency", {}).get("usd"),
+    }]
 
     # ─── Core metadata ───────────────────────────────────────────────────────────
     coin_id           = cg.get("id")
@@ -445,6 +468,12 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     }]
 
     _cache.set_financial_metrics(ticker, end_date, metrics)
+    if not metrics:
+        print(f"❌ No metrics found for {ticker}")
+    else:
+        print(f"✅ Metrics generated for {ticker}: {len(metrics[0].keys())} fields")
+
+    _cache.set_financial_metrics(ticker, end_date, metrics)
     return metrics
 
 def search_line_items(
@@ -506,7 +535,7 @@ def search_line_items(
             elif key == "quote_increment":
                 mapped["quote_increment"] = float(details.get("quote_increment", 0))
             else:
-                print(f"⚠️ Unsupported line item: {key}")
+                pass
 
         return [LineItem(**mapped)]
 
@@ -524,7 +553,7 @@ def get_historical_metrics(ticker: str, end_date: str) -> dict:
 
     start_30d = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=30)).strftime("%Y-%m-%d")
 
-    max_retries = 5
+    max_retries = 20
     for attempt in range(1, max_retries + 1):
         prices = get_prices(ticker, start_30d, end_date)
         if prices:
@@ -610,6 +639,34 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
     _cache.set_insider_trades(ticker, end_date, [t.model_dump() for t in trades])
     return trades
 
+_in_progress = {}
+
+def get_cached_coingecko_data(asset_id: str) -> dict | None:
+    key = f"coingecko:{asset_id}"
+    if cached := _cache.get_cached_data(key):
+        print(f"📦 Loaded cached CoinGecko data for {asset_id}")
+        return cached
+
+    # prevent duplicate simultaneous fetches
+    if asset_id in _in_progress:
+        while asset_id in _in_progress:
+            time.sleep(0.25)
+        return _cache.get_cached_data(key)  # re-check cache after waiting
+
+    _in_progress[asset_id] = True
+    try:
+        url = (
+            f"https://api.coingecko.com/api/v3/coins/{asset_id}"
+            "?localization=false&tickers=true&market_data=true"
+            "&community_data=true&developer_data=true&sparkline=false"
+        )
+        data = fetch_with_retry(url)
+        if data:
+            _cache.set_cached_data(key, data)
+        return data
+    finally:
+        del _in_progress[asset_id]
+
 def classify_sentiment(text: str) -> str:
     """Use OpenAI Chat API to classify sentiment as 'positive', 'neutral', or 'negative'."""
     from config2 import OPENAI_API_KEY
@@ -632,94 +689,82 @@ def classify_sentiment(text: str) -> str:
     sentiment = response.choices[0].message.content.strip().lower()
     return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
 
-def get_company_news(
-    ticker: str,
-    end_date: str,
-    start_date: str | None = None,
-    limit: int = 10,
-) -> list[CompanyNews]:
-    """Fetch company news using Alpaca API."""
+_news_in_progress = {}
+def get_company_news(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[CompanyNews]:
+    """Fetch company news using Alpaca API with cache and per-ticker locking."""
     from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
+    from data.cache import get_cache, get_lock
 
-    # Normalize ticker (e.g. BTC/USD → BTCUSD)
+    cache = get_cache()
+    lock = get_lock(ticker)
+
     symbol = ticker.replace("/", "").replace("-", "").upper()
 
-    # Check cache first
-    if cached_data := _cache.get_company_news(symbol):
-        filtered_data = [
-            CompanyNews(**news)
-            for news in cached_data
-            if (start_date is None or news["date"] >= start_date)
-            and news["date"] <= end_date
-        ]
-        filtered_data.sort(key=lambda x: x.date, reverse=True)
-        if filtered_data:
-            print(f"📦 Loaded cached news for {symbol}: {len(filtered_data)} articles")
-            return filtered_data
+    with lock:
+        # Check cache first
+        if cached_data := cache.get_company_news(symbol):
+            filtered_data = [
+                CompanyNews(**news)
+                for news in cached_data
+                if (start_date is None or news["date"] >= start_date)
+                and news["date"] <= end_date
+            ]
+            filtered_data.sort(key=lambda x: x.date, reverse=True)
+            if filtered_data:
+                print(f"📦 Loaded cached news for {symbol}: {len(filtered_data)} articles")
+                return filtered_data
 
-    all_news = []
+        # If not cached, fetch
+        print(f"📡 Requesting Alpaca news for {symbol}...")
 
-    headers = {
-        "accept": "application/json",
-        "APCA-API-KEY-ID": APCA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY,
-    }
+        headers = {
+            "accept": "application/json",
+            "APCA-API-KEY-ID": APCA_API_KEY_ID,
+            "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY,
+        }
 
-    base_url = "https://data.alpaca.markets/v1beta1/news"
-    params = {
-        "symbols": symbol,
-        "limit": limit,
-        "sort": "desc",
-        "include_content": "true",
-        "exclude_contentless": "true",
-    }
+        base_url = "https://data.alpaca.markets/v1beta1/news"
+        params = {
+            "symbols": symbol,
+            "limit": limit,
+            "sort": "desc",
+            "include_content": "true",
+            "exclude_contentless": "true",
+        }
 
-    if start_date and end_date:
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        params["start"] = start_dt.strftime("%Y-%m-%d")
-        params["end"] = end_dt.strftime("%Y-%m-%d")
+        if start_date and end_date:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            params["start"] = start_dt.strftime("%Y-%m-%d")
+            params["end"] = end_dt.strftime("%Y-%m-%d")
 
-    print(f"🔍 Final request URL: {base_url}")
-    print(f"🔍 Params: {params}")
+        response = requests.get(base_url, headers=headers, params=params)
+        if response.status_code != 200:
+            raise Exception(f"Error fetching Alpaca news: {response.status_code} - {response.text}")
 
-    print(f"📡 Requesting Alpaca news for {symbol}...")
-    response = requests.get(base_url, headers=headers, params=params)
-    if response.status_code != 200:
-        raise Exception(f"Error fetching Alpaca news: {response.status_code} - {response.text}")
+        data = response.json()
+        articles = data.get("news", [])
+        print(f"📄 Retrieved {len(articles)} news articles from Alpaca")
 
-    data = response.json()
-    print(f"📥 Raw response data: {json.dumps(data, indent=2)[:500]}")
-    articles = data.get("news", [])
-    print(f"📄 Retrieved {len(articles)} news articles from Alpaca")
+        news_items = []
+        for a in articles:
+            news_items.append(CompanyNews(
+                ticker=symbol,
+                title=a.get("headline"),
+                author=a.get("source"),
+                source=a.get("source"),
+                date=a.get("created_at")[:10],
+                url=a.get("url"),
+                sentiment=None
+            ))
 
-    # Step 1: Convert to CompanyNews objects first (without sentiment)
-    news_items = []
-    for a in articles:
-        news_items.append(CompanyNews(
-            ticker=symbol,
-            title=a.get("headline"),
-            author=a.get("source"),
-            source=a.get("source"),
-            date=a.get("created_at")[:10],
-            url=a.get("url"),
-            sentiment=None
-        ))
+        for item in news_items:
+            item.sentiment = classify_sentiment(item.title)
 
-    # Step 2: Assign sentiment dynamically
-    for item in news_items:
-        item.sentiment = classify_sentiment(f"{item.title}")
+        cache.set_company_news(symbol, [n.model_dump() for n in news_items])
+        print(f"✅ Done fetching Alpaca news for {symbol} — {len(news_items)} articles")
 
-    all_news = news_items
-
-    if not all_news:
-        print(f"⚠️ No news found for {symbol}.")
-    else:
-        print(f"✅ Done fetching Alpaca news for {symbol} — {len(all_news)} articles")
-
-    _cache.set_company_news(symbol, [n.model_dump() for n in all_news])
-    return all_news
-
+        return news_items
 
 
 def get_market_cap(ticker: str, end_date: str) -> float | None:
@@ -735,7 +780,7 @@ def get_market_cap(ticker: str, end_date: str) -> float | None:
         return None
 
     url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}"
-    cg = fetch_with_retry(url, max_retries=5, delay=30)
+    cg = get_cached_coingecko_data(coingecko_id)
     if not cg:
         return None
 

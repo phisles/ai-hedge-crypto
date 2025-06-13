@@ -423,6 +423,8 @@ def generate_cathie_wood_output(
     """
     Generates crypto investment decisions in the style of Cathie Wood.
     """
+    signal = analysis_data[ticker]["signal"]  # Extract signal for this asset
+
     template = ChatPromptTemplate.from_messages([
         (
             "system",
@@ -461,18 +463,21 @@ If bearish: “Despite high TVL, NVT ratio is elevated, active address growth ha
 Analysis Data for {ticker}:
 {analysis_data}
 
+Initial Signal: {signal}
+
 Return the signal as JSON:
-{
+{{
   "signal": "bullish/bearish/neutral",
   "confidence": float (0–100),
   "reasoning": "string"
-}"""
+}}"""
         ),
     ])
 
     prompt = template.invoke({
-        "analysis_data": json.dumps(analysis_data, indent=2),
-        "ticker": ticker
+        "ticker": ticker,
+        "analysis_data": json.dumps(analysis_data[ticker], indent=2),
+        "signal": signal,
     })
 
     def create_default_cathie_wood_signal():

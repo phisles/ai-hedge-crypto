@@ -98,6 +98,7 @@ def warren_buffett_agent(state: AgentState):
         buffett_output = generate_buffett_output(
             ticker=ticker,
             analysis_data=analysis_data[ticker],
+            signal=signal,
             model_name=state["metadata"]["model_name"],
             model_provider=state["metadata"]["model_provider"],
         )
@@ -200,6 +201,7 @@ def analyze_management_quality(metrics: dict) -> dict:
 def generate_buffett_output(
     ticker: str,
     analysis_data: dict,
+    signal: str,
     model_name: str,
     model_provider: str,
 ) -> WarrenBuffettSignal:
@@ -208,20 +210,20 @@ def generate_buffett_output(
         (
             "system",
             """You are a crypto-adapted Warren Buffett AI, making decisions on digital assets using these principles:
-            - Circle of Competence: Only invest in protocols you understand (tokenomics, use-cases, tech stack)
-            - Margin of Safety: Require a significant discount to intrinsic or network-value metrics (e.g. NVT)
-            - Economic Moat: Seek durable network effects, high active-address growth, and strong developer activity
-            - Quality Management: Value strong, transparent development teams and governance
-            - Financial Strength: Favor tokens with low inflation rates and attractive staking yields
-            - Long-term Horizon: Hold assets for network maturation, not just price swings
-            - Sell only if on-chain fundamentals deteriorate, tokenomics break down, or valuation far exceeds intrinsic value
+- Circle of Competence: Only invest in protocols you understand (tokenomics, use-cases, tech stack)
+- Margin of Safety: Require a significant discount to intrinsic or network-value metrics (e.g. NVT)
+- Economic Moat: Seek durable network effects, high active-address growth, and strong developer activity
+- Quality Management: Value strong, transparent development teams and governance
+- Financial Strength: Favor tokens with low inflation rates and attractive staking yields
+- Long-term Horizon: Hold assets for network maturation, not just price swings
+- Sell only if on-chain fundamentals deteriorate, tokenomics break down, or valuation far exceeds intrinsic value
 
-            When providing your reasoning, be thorough and specific by:
-            1. Explaining which on-chain and tokenomics factors mattered most (e.g., NVT ratio, address growth)
-            2. Showing how the asset aligns with or violates these Buffett-inspired principles
-            3. Providing quantitative evidence from analysis_data (e.g., NVT thresholds, inflation rate)
-            4. Concluding with a Buffett-style conviction statement in a clear, conversational tone
-            """
+When providing your reasoning, be thorough and specific by:
+1. Explaining which on-chain and tokenomics factors mattered most (e.g., NVT ratio, address growth)
+2. Showing how the asset aligns with or violates these Buffett-inspired principles
+3. Providing quantitative evidence from analysis_data (e.g., NVT thresholds, inflation rate)
+4. Concluding with a Buffett-style conviction statement in a clear, conversational tone
+"""
         ),
         (
             "human",
@@ -229,14 +231,14 @@ def generate_buffett_output(
 {analysis_data}
 
 Return JSON exactly:
-{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}
+{{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}}
 """
         ),
     ])
 
     prompt = template.invoke({
         "ticker": ticker,
-        "analysis_data": json.dumps(analysis_data, indent=2),
+        "analysis_data": analysis_data
     })
 
     def default():

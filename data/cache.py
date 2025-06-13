@@ -1,11 +1,18 @@
+import threading
+from collections import defaultdict
+
 class Cache:
     """In-memory cache for API responses, keyed by ticker and date where needed."""
 
+
+
     def __init__(self):
         # Composite-key caches
+        self._generic_data: dict[str, any] = {}
         self._prices_cache: dict[str, list[dict[str, any]]] = {}
         self._financial_metrics_cache: dict[str, list[dict[str, any]]] = {}
         self._historical_metrics_cache: dict[str, dict[str, any]] = {}
+        self._locks = defaultdict(threading.Lock)
         self._insider_trades_cache: dict[str, list[dict[str, any]]] = {}
         self._market_cap_cache: dict[str, float] = {}
         # Single-key caches
@@ -20,6 +27,12 @@ class Cache:
         merged = existing.copy()
         merged.extend([item for item in new_data if item[key_field] not in existing_keys])
         return merged
+    
+    def get_cached_data(self, key: str):
+        return self._generic_data.get(key)
+
+    def set_cached_data(self, key: str, value):
+        self._generic_data[key] = value
 
     # ─── Prices ────────────────────────────────────────────────────────────────
     def get_prices(self, ticker: str, start: str, end: str) -> list[dict[str, any]] | None:
@@ -80,3 +93,7 @@ _cache = Cache()
 def get_cache() -> Cache:
     """Get the global cache instance."""
     return _cache
+
+def get_lock(ticker: str) -> threading.Lock:
+    """Expose per-ticker lock from global cache."""
+    return _cache._locks[ticker]

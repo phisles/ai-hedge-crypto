@@ -34,7 +34,7 @@ def ben_graham_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("ben_graham_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker)
+        metrics = get_financial_metrics(ticker, end_date)
 
         progress.update_status("ben_graham_agent", ticker, "Gathering financial line items")
         financial_line_items = []

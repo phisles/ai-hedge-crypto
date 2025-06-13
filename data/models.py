@@ -71,6 +71,8 @@ class LineItem(BaseModel):
     period: str
     currency: str
 
+    free_cash_flow: float | None = None  # ← Add this line
+
     # Allow additional fields dynamically
     model_config = {"extra": "allow"}
 
