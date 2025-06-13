@@ -9,6 +9,7 @@ import pandas as pd
 from colorama import Fore, Style, init
 import numpy as np
 import itertools
+from tools.api import get_historical_metrics  # ← already imported but underused
 
 from llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from utils.analysts import ANALYST_ORDER
@@ -310,18 +311,10 @@ class Backtester:
         start_date_str = start_date_dt.strftime("%Y-%m-%d")
 
         for ticker in self.tickers:
-            # Fetch price data for the entire period, plus 1 year
             get_prices(ticker, start_date_str, self.end_date)
-
-            # Fetch financial metrics
-            from tools.api import get_historical_metrics  # make sure this is imported
-
             get_historical_metrics(ticker, self.end_date)
-
-            # Fetch insider trades
+            get_financial_metrics(ticker, self.end_date)  # ← ✅ add this
             get_insider_trades(ticker, self.end_date, start_date=self.start_date, limit=1000)
-
-            # Fetch company news
             get_company_news(ticker, self.end_date, start_date=self.start_date, limit=1000)
 
         print("Data pre-fetch complete.")

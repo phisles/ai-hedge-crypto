@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import sys
 from openai import OpenAI
+import random
 import os
 import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -63,29 +64,41 @@ COINGECKO_IDS = {
 # Global cache instance
 _cache = get_cache()
 
-def fetch_with_retry(url, max_retries=5, delay=30):
-    for attempt in range(max_retries):
-        response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 429:
-            print(f"⏳ CoinGecko rate limit hit. Retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
+def fetch_with_retry(url, max_retries=5, base_delay=2):
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                wait = base_delay * 2 ** (attempt - 1)
+                jitter = random.uniform(0.5, 1.5)
+                delay = wait * jitter
+                print(f"⏳ CoinGecko rate limit hit. Retrying in {delay:.2f}s (attempt {attempt}/{max_retries})...")
+                time.sleep(delay)
+            else:
+                print(f"❌ HTTP {response.status_code} for {url}: {response.text}")
+                break
+        except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
+            wait = base_delay * 2 ** (attempt - 1)
+            jitter = random.uniform(0.5, 1.5)
+            delay = wait * jitter
+            print(f"⚠️ Request error (attempt {attempt}/{max_retries}) – {e}. Retrying in {delay:.2f}s...")
             time.sleep(delay)
-        else:
-            print(f"❌ HTTP {response.status_code} for {url}: {response.text}")
-            break
     print("🛑 Max retries exceeded for CoinGecko.")
     return None
 
 def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """Fetch historical daily close prices from Gemini API."""
+
+    if cached := _cache.get_prices(ticker, start_date, end_date):
+        print(f"📦 Loaded cached prices for {ticker} ({start_date} → {end_date}): {len(cached)} entries")
+        return [Price(**item) for item in cached]
+
     import datetime
     import time
 
-    # Convert ticker like "BTC/USD" or "BTC-USD" → "btcusd"
     symbol = ticker.replace("/", "").replace("-", "").lower()
-
-    # Gemini uses UNIX timestamps in milliseconds
     start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
     start_ts = int(time.mktime(start_dt.timetuple())) * 1000
@@ -102,12 +115,9 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     except Exception as e:
         raise Exception(f"❌ Error during Gemini price fetch for {ticker}: {e}")
 
-    print(f"✅ Gemini response received: {response.status_code}")
-
     if response.status_code != 200:
         raise Exception(f"Error fetching Gemini price data: {ticker} - {response.status_code} - {response.text}")
 
-    # Gemini returns [timestamp, open, high, low, close, volume]
     data = response.json()
     result = []
     for candle in data:
@@ -123,10 +133,16 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
         ))
 
     print(f"📊 Parsed {len(result)} candles from Gemini for {symbol}")
+    _cache.set_prices(ticker, start_date, end_date, [p.model_dump() for p in result])
     return result
 
 def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     """Return crypto-adapted financial metrics for a given CoinGecko asset ID (e.g., 'bitcoin')."""
+    # ─── Check cache ──────────────────────────────────────────────────────────────
+    if cached := _cache.get_financial_metrics(ticker, end_date):
+        print(f"📦 Loaded cached financial metrics for {ticker}")
+        return cached
+
     import requests
 
     # ─── Historical metrics ─────────────────────────────────────────────────────
@@ -305,7 +321,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     except Exception as e:
         print(f"⚠️ Failed to fetch Gemini v2 candle for {gem_symbol}: {e}")
 
-    return [{
+    metrics = [{
         "ticker":                      ticker.upper(),
         "report_period":               "latest",
         "period":                      "ttm",
@@ -428,6 +444,9 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         "return_on_assets":                 "not applicable to crypto",
     }]
 
+    _cache.set_financial_metrics(ticker, end_date, metrics)
+    return metrics
+
 def search_line_items(
     ticker: str,
     line_items: list[str],
@@ -496,7 +515,10 @@ def search_line_items(
         return []
 
 def get_historical_metrics(ticker: str, end_date: str) -> dict:
-    """Construct crypto financial metrics using historical Gemini price/volume with retry."""
+    if cached := _cache.get_historical_metrics(ticker, end_date):
+        print(f"📦 Loaded cached historical metrics for {ticker}")
+        return cached
+
     from time import sleep
     from datetime import datetime, timedelta
 
@@ -518,20 +540,24 @@ def get_historical_metrics(ticker: str, end_date: str) -> dict:
     pct_30d = (df["close"].iloc[-1] / df["close"].iloc[0] - 1) if len(df) > 1 else 0.0
     volume_to_market_cap = df["volume"].mean() / (df["close"].mean() * 1_000_000)
 
-    return {
+    result = {
         "price_change_pct_30d": pct_30d,
         "volume_to_market_cap": volume_to_market_cap,
         "sentiment_votes_up_pct": 50.0  # placeholder
     }
 
-def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[InsiderTrade]:
-    """Use Blockchair BTC transaction data to simulate whale trades (free)."""
-    import datetime
-    import time
-    import requests
+    _cache.set_historical_metrics(ticker, end_date, result)
+    return result
 
-    if ticker.upper() != "BTC/USD":
-        print(f"⚠️ Blockchair free API only supports BTC for this function. Skipping {ticker}")
+def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[InsiderTrade]:
+    ticker = ticker.upper()
+    if cached := _cache.get_insider_trades(ticker, end_date):
+        print(f"📦 Loaded cached insider trades for {ticker}")
+        return [InsiderTrade(**item) for item in cached]
+
+    if ticker != "BTC/USD":
+        print(f"ℹ️ Insider trades only available for BTC. Returning empty list for {ticker}")
+        _cache.set_insider_trades(ticker, end_date, [])
         return []
 
     def get_with_backoff(url, params=None, headers=None, max_retries=1, timeout=1):
@@ -565,16 +591,7 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
         return []
 
     txs = response.json().get("data", [])
-    if not txs:
-        print("ℹ️ No transaction data received.")
-        return []
-
     trades = []
-    largest = sorted(txs, key=lambda tx: tx.get("input_total_usd", 0), reverse=True)[:5]
-    print("🔍 Largest transactions:")
-    for tx in largest:
-        print(f" - ${tx['input_total_usd']:.2f} on {tx['date']} (BTC: {tx['input_total'] / 1e8:.4f})")
-
     for tx in txs:
         usd = tx.get("input_total_usd", 0)
         btc = tx.get("input_total", 0) / 1e8
@@ -582,7 +599,7 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
             trades.append(InsiderTrade(
                 insider_name="Unknown Wallet",
                 role="Whale",
-                ticker="BTC/USD",
+                ticker=ticker,
                 transaction_type="Large Transfer",
                 shares=btc,
                 price=usd / btc if btc else 0,
@@ -590,8 +607,7 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
                 filing_date=tx["date"]
             ))
 
-    if not trades:
-        print("ℹ️ No large BTC transfers found.")
+    _cache.set_insider_trades(ticker, end_date, [t.model_dump() for t in trades])
     return trades
 
 def classify_sentiment(text: str) -> str:
@@ -707,7 +723,10 @@ def get_company_news(
 
 
 def get_market_cap(ticker: str, end_date: str) -> float | None:
-    """Fetch market cap using CoinGecko public API, with retry on rate-limit."""
+    if cached := _cache.get_market_cap(ticker, end_date):
+        print(f"📦 Loaded cached market cap for {ticker}")
+        return cached
+
     base = ticker.upper().replace("/USD", "").replace("-USD", "")
     coingecko_id = COINGECKO_IDS.get(base)
 
@@ -721,6 +740,8 @@ def get_market_cap(ticker: str, end_date: str) -> float | None:
         return None
 
     market_cap = cg.get("market_data", {}).get("market_cap", {}).get("usd")
+    if market_cap:
+        _cache.set_market_cap(ticker, end_date, float(market_cap))
     return float(market_cap) if market_cap else None
 
 

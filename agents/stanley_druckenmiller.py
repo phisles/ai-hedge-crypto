@@ -38,7 +38,9 @@ def stanley_druckenmiller_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching on‐chain metrics")
-        metrics_list = get_financial_metrics(ticker)
+        # ── new ───────────────────────────────────────────────────────────────────────
+        end_date    = state["data"]["end_date"]
+        metrics_list = get_financial_metrics(ticker, end_date)
         metrics = metrics_list[0] if isinstance(metrics_list, list) and metrics_list else {}
         market_cap = metrics.get("market_cap")
         total_volume = metrics.get("total_volume")
