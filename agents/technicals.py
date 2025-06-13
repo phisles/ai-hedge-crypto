@@ -1,14 +1,11 @@
 import math
-
-from langchain_core.messages import HumanMessage
-
-from graph.state import AgentState, show_agent_reasoning
-
 import json
 import pandas as pd
 import numpy as np
 
-from tools.api import get_prices, prices_to_df
+from langchain_core.messages import HumanMessage
+from graph.state import AgentState, show_agent_reasoning
+from tools.api import get_prices, prices_to_df, get_financial_metrics
 from utils.progress import progress
 
 
@@ -18,7 +15,7 @@ def technical_analyst_agent(state: AgentState):
     Sophisticated technical analysis system that combines multiple trading strategies for multiple tickers:
     1. Trend Following
     2. Mean Reversion
-    3. Momentum
+    3. Momentum (with network volume confirmation)
     4. Volatility Analysis
     5. Statistical Arbitrage Signals
     """
@@ -27,25 +24,21 @@ def technical_analyst_agent(state: AgentState):
     end_date = data["end_date"]
     tickers = data["tickers"]
 
-    # Initialize analysis for each ticker
     technical_analysis = {}
 
     for ticker in tickers:
         progress.update_status("technical_analyst_agent", ticker, "Analyzing price data")
 
-        # Get the historical price data
-        prices = get_prices(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
+        # ─── Price history ────────────────────────────────────────────────────────
+        prices = get_prices(ticker=ticker, start_date=start_date, end_date=end_date)
         if not prices:
             progress.update_status("technical_analyst_agent", ticker, "Failed: No price data found")
             continue
-
-        # Convert prices to a DataFrame
         prices_df = prices_to_df(prices)
+
+        # ─── On-chain network volume ──────────────────────────────────────────────
+        metrics = get_financial_metrics(ticker)
+        network_vol = metrics[0].get("total_volume", 0) if isinstance(metrics, list) and metrics else 0
 
         progress.update_status("technical_analyst_agent", ticker, "Calculating trend signals")
         trend_signals = calculate_trend_signals(prices_df)
@@ -54,7 +47,7 @@ def technical_analyst_agent(state: AgentState):
         mean_reversion_signals = calculate_mean_reversion_signals(prices_df)
 
         progress.update_status("technical_analyst_agent", ticker, "Calculating momentum")
-        momentum_signals = calculate_momentum_signals(prices_df)
+        momentum_signals = calculate_momentum_signals(prices_df, network_vol)
 
         progress.update_status("technical_analyst_agent", ticker, "Analyzing volatility")
         volatility_signals = calculate_volatility_signals(prices_df)
@@ -62,12 +55,12 @@ def technical_analyst_agent(state: AgentState):
         progress.update_status("technical_analyst_agent", ticker, "Statistical analysis")
         stat_arb_signals = calculate_stat_arb_signals(prices_df)
 
-        # Combine all signals using a weighted ensemble approach
+        # ─── Combine all signals using a weighted ensemble approach ──────────────
         strategy_weights = {
-            "trend": 0.25,
-            "mean_reversion": 0.20,
-            "momentum": 0.25,
-            "volatility": 0.15,
+            "trend": 0.20,
+            "mean_reversion": 0.15,
+            "momentum": 0.30,
+            "volatility": 0.20,
             "stat_arb": 0.15,
         }
 
@@ -83,7 +76,6 @@ def technical_analyst_agent(state: AgentState):
             strategy_weights,
         )
 
-        # Generate detailed analysis report for this ticker
         technical_analysis[ticker] = {
             "signal": combined_signal["signal"],
             "confidence": round(combined_signal["confidence"] * 100),
@@ -118,7 +110,6 @@ def technical_analyst_agent(state: AgentState):
         print(f"📤 Technical Analyst output for {ticker}:\n", json.dumps(technical_analysis[ticker], indent=2))
         progress.update_status("technical_analyst_agent", ticker, "Done")
 
-    # Create the technical analyst message
     message = HumanMessage(
         content=json.dumps(technical_analysis),
         name="technical_analyst_agent",
@@ -127,7 +118,6 @@ def technical_analyst_agent(state: AgentState):
     if state["metadata"]["show_reasoning"]:
         show_agent_reasoning(technical_analysis, "Technical Analyst")
 
-    # Add the signal to the analyst_signals list
     state["data"]["analyst_signals"]["technical_analyst_agent"] = technical_analysis
 
     return {
@@ -136,74 +126,62 @@ def technical_analyst_agent(state: AgentState):
     }
 
 
-def calculate_trend_signals(prices_df):
+def calculate_trend_signals(prices_df: pd.DataFrame) -> dict:
     """
     Advanced trend following strategy using multiple timeframes and indicators
     """
-    # Calculate EMAs for multiple timeframes
-    ema_8 = calculate_ema(prices_df, 8)
-    ema_21 = calculate_ema(prices_df, 21)
-    ema_55 = calculate_ema(prices_df, 55)
+    ema_12 = calculate_ema(prices_df, 12)
+    ema_26 = calculate_ema(prices_df, 26)
+    ema_50 = calculate_ema(prices_df, 50)
 
-    # Calculate ADX for trend strength
     adx = calculate_adx(prices_df, 14)
-
-    # Determine trend direction and strength
-    short_trend = ema_8 > ema_21
-    medium_trend = ema_21 > ema_55
-
-    # Combine signals with confidence weighting
     trend_strength = adx["adx"].iloc[-1] / 100.0
 
+    short_trend = ema_12 > ema_26
+    medium_trend = ema_26 > ema_50
+
     if short_trend.iloc[-1] and medium_trend.iloc[-1]:
-        signal = "bullish"
-        confidence = trend_strength
+        signal, confidence = "bullish", trend_strength
     elif not short_trend.iloc[-1] and not medium_trend.iloc[-1]:
-        signal = "bearish"
-        confidence = trend_strength
+        signal, confidence = "bearish", trend_strength
     else:
-        signal = "neutral"
-        confidence = 0.5
+        signal, confidence = "neutral", 0.5
 
     return {
         "signal": signal,
         "confidence": confidence,
         "metrics": {
-            "adx": float(adx["adx"].iloc[-1]),
+            "ema12": float(ema_12.iloc[-1]),
+            "ema26": float(ema_26.iloc[-1]),
+            "ema50": float(ema_50.iloc[-1]),
             "trend_strength": float(trend_strength),
         },
     }
 
 
-def calculate_mean_reversion_signals(prices_df):
+def calculate_mean_reversion_signals(prices_df: pd.DataFrame) -> dict:
     """
     Mean reversion strategy using statistical measures and Bollinger Bands
     """
-    # Calculate z-score of price relative to moving average
     ma_50 = prices_df["close"].rolling(window=50).mean()
     std_50 = prices_df["close"].rolling(window=50).std()
     z_score = (prices_df["close"] - ma_50) / std_50
 
-    # Calculate Bollinger Bands
     bb_upper, bb_lower = calculate_bollinger_bands(prices_df)
 
-    # Calculate RSI with multiple timeframes
     rsi_14 = calculate_rsi(prices_df, 14)
     rsi_28 = calculate_rsi(prices_df, 28)
 
-    # Mean reversion signals
-    price_vs_bb = (prices_df["close"].iloc[-1] - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
+    price_vs_bb = (
+        prices_df["close"].iloc[-1] - bb_lower.iloc[-1]
+    ) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
 
-    # Combine signals
     if z_score.iloc[-1] < -2 and price_vs_bb < 0.2:
-        signal = "bullish"
-        confidence = min(abs(z_score.iloc[-1]) / 4, 1.0)
+        signal, confidence = "bullish", min(abs(z_score.iloc[-1]) / 4, 1.0)
     elif z_score.iloc[-1] > 2 and price_vs_bb > 0.8:
-        signal = "bearish"
-        confidence = min(abs(z_score.iloc[-1]) / 4, 1.0)
+        signal, confidence = "bearish", min(abs(z_score.iloc[-1]) / 4, 1.0)
     else:
-        signal = "neutral"
-        confidence = 0.5
+        signal, confidence = "neutral", 0.5
 
     return {
         "signal": signal,
@@ -217,85 +195,64 @@ def calculate_mean_reversion_signals(prices_df):
     }
 
 
-def calculate_momentum_signals(prices_df):
+def calculate_momentum_signals(prices_df: pd.DataFrame, network_vol: float) -> dict:
     """
-    Multi-factor momentum strategy
+    Multi-factor momentum strategy with network volume confirmation
     """
-    # Price momentum
     returns = prices_df["close"].pct_change()
-    mom_1m = returns.rolling(21).sum()
-    mom_3m = returns.rolling(63).sum()
-    mom_6m = returns.rolling(126).sum()
+    mom_1m = returns.rolling(21).sum().iloc[-1]
+    mom_3m = returns.rolling(63).sum().iloc[-1]
+    mom_6m = returns.rolling(126).sum().iloc[-1]
 
-    # Volume momentum
-    volume_ma = prices_df["volume"].rolling(21).mean()
-    volume_momentum = prices_df["volume"] / volume_ma
+    volume_ma = prices_df["volume"].rolling(21).mean().iloc[-1]
+    volume_confirmation = (
+        prices_df["volume"].iloc[-1] > volume_ma
+        and prices_df["volume"].iloc[-1] > network_vol
+    )
 
-    # Relative strength
-    # (would compare to market/sector in real implementation)
-
-    # Calculate momentum score
-    momentum_score = (0.4 * mom_1m + 0.3 * mom_3m + 0.3 * mom_6m).iloc[-1]
-
-    # Volume confirmation
-    volume_confirmation = volume_momentum.iloc[-1] > 1.0
-
-    if momentum_score > 0.05 and volume_confirmation:
-        signal = "bullish"
-        confidence = min(abs(momentum_score) * 5, 1.0)
-    elif momentum_score < -0.05 and volume_confirmation:
-        signal = "bearish"
-        confidence = min(abs(momentum_score) * 5, 1.0)
+    score_raw = 0.4 * mom_1m + 0.3 * mom_3m + 0.3 * mom_6m
+    if score_raw > 0 and volume_confirmation:
+        signal, confidence = "bullish", min(score_raw * 5, 1.0)
+    elif score_raw < 0 and volume_confirmation:
+        signal, confidence = "bearish", min(-score_raw * 5, 1.0)
     else:
-        signal = "neutral"
-        confidence = 0.5
+        signal, confidence = "neutral", 0.5
 
     return {
         "signal": signal,
         "confidence": confidence,
         "metrics": {
-            "momentum_1m": float(mom_1m.iloc[-1]),
-            "momentum_3m": float(mom_3m.iloc[-1]),
-            "momentum_6m": float(mom_6m.iloc[-1]),
-            "volume_momentum": float(volume_momentum.iloc[-1]),
+            "momentum_1m": float(mom_1m),
+            "momentum_3m": float(mom_3m),
+            "momentum_6m": float(mom_6m),
+            "volume_confirmation": volume_confirmation,
         },
     }
 
 
-def calculate_volatility_signals(prices_df):
+def calculate_volatility_signals(prices_df: pd.DataFrame) -> dict:
     """
     Volatility-based trading strategy
     """
-    # Calculate various volatility metrics
     returns = prices_df["close"].pct_change()
-
-    # Historical volatility
     hist_vol = returns.rolling(21).std() * math.sqrt(252)
 
-    # Volatility regime detection
     vol_ma = hist_vol.rolling(63).mean()
     vol_regime = hist_vol / vol_ma
-
-    # Volatility mean reversion
     vol_z_score = (hist_vol - vol_ma) / hist_vol.rolling(63).std()
 
-    # ATR ratio
     atr = calculate_atr(prices_df)
     atr_ratio = atr / prices_df["close"]
 
-    # Generate signal based on volatility regime
     current_vol_regime = vol_regime.iloc[-1]
     vol_z = vol_z_score.iloc[-1]
 
     if current_vol_regime < 0.8 and vol_z < -1:
-        signal = "bullish"  # Low vol regime, potential for expansion
-        confidence = min(abs(vol_z) / 3, 1.0)
+        signal, confidence = "bullish", min(abs(vol_z) / 3, 1.0)
     elif current_vol_regime > 1.2 and vol_z > 1:
-        signal = "bearish"  # High vol regime, potential for contraction
-        confidence = min(abs(vol_z) / 3, 1.0)
+        signal, confidence = "bearish", min(abs(vol_z) / 3, 1.0)
     else:
-        signal = "neutral"
-        confidence = 0.5
+        signal, confidence = "neutral", 0.5
 
     return {
         "signal": signal,
@@ -309,70 +266,45 @@ def calculate_volatility_signals(prices_df):
     }
 
 
-def calculate_stat_arb_signals(prices_df):
+def calculate_stat_arb_signals(prices_df: pd.DataFrame) -> dict:
     """
     Statistical arbitrage signals based on price action analysis
     """
-    # Calculate price distribution statistics
     returns = prices_df["close"].pct_change()
-
-    # Skewness and kurtosis
-    skew = returns.rolling(63).skew()
-    kurt = returns.rolling(63).kurt()
-
-    # Test for mean reversion using Hurst exponent
+    skew = returns.rolling(63).skew().iloc[-1]
     hurst = calculate_hurst_exponent(prices_df["close"])
 
-    # Correlation analysis
-    # (would include correlation with related securities in real implementation)
-
-    # Generate signal based on statistical properties
-    if hurst < 0.4 and skew.iloc[-1] > 1:
-        signal = "bullish"
-        confidence = (0.5 - hurst) * 2
-    elif hurst < 0.4 and skew.iloc[-1] < -1:
-        signal = "bearish"
-        confidence = (0.5 - hurst) * 2
+    if hurst < 0.4 and skew > 1:
+        signal, confidence = "bullish", (0.5 - hurst) * 2
+    elif hurst < 0.4 and skew < -1:
+        signal, confidence = "bearish", (0.5 - hurst) * 2
     else:
-        signal = "neutral"
-        confidence = 0.5
+        signal, confidence = "neutral", 0.5
 
     return {
         "signal": signal,
         "confidence": confidence,
         "metrics": {
             "hurst_exponent": float(hurst),
-            "skewness": float(skew.iloc[-1]),
-            "kurtosis": float(kurt.iloc[-1]),
+            "skewness": float(skew),
         },
     }
 
 
-def weighted_signal_combination(signals, weights):
+def weighted_signal_combination(signals: dict, weights: dict) -> dict:
     """
     Combines multiple trading signals using a weighted approach
     """
-    # Convert signals to numeric values
     signal_values = {"bullish": 1, "neutral": 0, "bearish": -1}
-
     weighted_sum = 0
     total_confidence = 0
 
-    for strategy, signal in signals.items():
-        numeric_signal = signal_values[signal["signal"]]
-        weight = weights[strategy]
-        confidence = signal["confidence"]
+    for strat, sig in signals.items():
+        w = weights[strat]
+        weighted_sum += signal_values[sig["signal"]] * sig["confidence"] * w
+        total_confidence += sig["confidence"] * w
 
-        weighted_sum += numeric_signal * weight * confidence
-        total_confidence += weight * confidence
-
-    # Normalize the weighted sum
-    if total_confidence > 0:
-        final_score = weighted_sum / total_confidence
-    else:
-        final_score = 0
-
-    # Convert back to signal
+    final_score = weighted_sum / total_confidence if total_confidence > 0 else 0
     if final_score > 0.2:
         signal = "bullish"
     elif final_score < -0.2:
@@ -384,15 +316,14 @@ def weighted_signal_combination(signals, weights):
 
 
 def normalize_pandas(obj):
-    """Convert pandas Series/DataFrames to primitive Python types"""
     if isinstance(obj, pd.Series):
         return obj.tolist()
-    elif isinstance(obj, pd.DataFrame):
+    if isinstance(obj, pd.DataFrame):
         return obj.to_dict("records")
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: normalize_pandas(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [normalize_pandas(item) for item in obj]
+    if isinstance(obj, (list, tuple)):
+        return [normalize_pandas(i) for i in obj]
     return obj
 
 
@@ -403,57 +334,30 @@ def calculate_rsi(prices_df: pd.DataFrame, period: int = 14) -> pd.Series:
     avg_gain = gain.rolling(window=period).mean()
     avg_loss = loss.rolling(window=period).mean()
     rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
-def calculate_bollinger_bands(prices_df: pd.DataFrame, window: int = 20) -> tuple[pd.Series, pd.Series]:
+def calculate_bollinger_bands(prices_df: pd.DataFrame, window: int = 20):
     sma = prices_df["close"].rolling(window).mean()
     std_dev = prices_df["close"].rolling(window).std()
-    upper_band = sma + (std_dev * 2)
-    lower_band = sma - (std_dev * 2)
-    return upper_band, lower_band
+    return sma + 2 * std_dev, sma - 2 * std_dev
 
 
 def calculate_ema(df: pd.DataFrame, window: int) -> pd.Series:
-    """
-    Calculate Exponential Moving Average
-
-    Args:
-        df: DataFrame with price data
-        window: EMA period
-
-    Returns:
-        pd.Series: EMA values
-    """
     return df["close"].ewm(span=window, adjust=False).mean()
 
 
 def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
-    """
-    Calculate Average Directional Index (ADX)
-
-    Args:
-        df: DataFrame with OHLC data
-        period: Period for calculations
-
-    Returns:
-        DataFrame with ADX values
-    """
-    # Calculate True Range
     df["high_low"] = df["high"] - df["low"]
     df["high_close"] = abs(df["high"] - df["close"].shift())
     df["low_close"] = abs(df["low"] - df["close"].shift())
     df["tr"] = df[["high_low", "high_close", "low_close"]].max(axis=1)
 
-    # Calculate Directional Movement
     df["up_move"] = df["high"] - df["high"].shift()
     df["down_move"] = df["low"].shift() - df["low"]
-
     df["plus_dm"] = np.where((df["up_move"] > df["down_move"]) & (df["up_move"] > 0), df["up_move"], 0)
     df["minus_dm"] = np.where((df["down_move"] > df["up_move"]) & (df["down_move"] > 0), df["down_move"], 0)
 
-    # Calculate ADX
     df["+di"] = 100 * (df["plus_dm"].ewm(span=period).mean() / df["tr"].ewm(span=period).mean())
     df["-di"] = 100 * (df["minus_dm"].ewm(span=period).mean() / df["tr"].ewm(span=period).mean())
     df["dx"] = 100 * abs(df["+di"] - df["-di"]) / (df["+di"] + df["-di"])
@@ -463,48 +367,18 @@ def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
 
 
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """
-    Calculate Average True Range
-
-    Args:
-        df: DataFrame with OHLC data
-        period: Period for ATR calculation
-
-    Returns:
-        pd.Series: ATR values
-    """
     high_low = df["high"] - df["low"]
     high_close = abs(df["high"] - df["close"].shift())
     low_close = abs(df["low"] - df["close"].shift())
-
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-
-    return true_range.rolling(period).mean()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
 
 
 def calculate_hurst_exponent(price_series: pd.Series, max_lag: int = 20) -> float:
-    """
-    Calculate Hurst Exponent to determine long-term memory of time series
-    H < 0.5: Mean reverting series
-    H = 0.5: Random walk
-    H > 0.5: Trending series
-
-    Args:
-        price_series: Array-like price data
-        max_lag: Maximum lag for R/S calculation
-
-    Returns:
-        float: Hurst exponent
-    """
     lags = range(2, max_lag)
-    # Add small epsilon to avoid log(0)
-    tau = [max(1e-8, np.sqrt(np.std(np.subtract(price_series[lag:], price_series[:-lag])))) for lag in lags]
-
-    # Return the Hurst exponent from linear fit
+    tau = [max(1e-8, np.sqrt(np.std(price_series[lag:] - price_series[:-lag]))) for lag in lags]
     try:
-        reg = np.polyfit(np.log(lags), np.log(tau), 1)
-        return reg[0]  # Hurst exponent is the slope
-    except (ValueError, RuntimeWarning):
-        # Return 0.5 (random walk) if calculation fails
+        m = np.polyfit(np.log(lags), np.log(tau), 1)
+        return m[0]
+    except:
         return 0.5

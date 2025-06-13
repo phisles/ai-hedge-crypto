@@ -16,98 +16,55 @@ class CharlieMungerSignal(BaseModel):
 
 def charlie_munger_agent(state: AgentState):
     """
-    Analyzes stocks using Charlie Munger's investing principles and mental models.
-    Focuses on moat strength, management quality, predictability, and valuation.
+    Analyzes crypto assets using Charlie Munger's principles adapted for on-chain metrics and news sentiment.
     """
     data = state["data"]
     end_date = data["end_date"]
     tickers = data["tickers"]
-    
+
     analysis_data = {}
     munger_analysis = {}
-    
+
     for ticker in tickers:
-        progress.update_status("charlie_munger_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)  # Munger looks at longer periods
-        
-        progress.update_status("charlie_munger_agent", ticker, "Gathering financial line items")
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "net_income",
-                "operating_income",
-                "return_on_invested_capital",
-                "gross_margin",
-                "operating_margin",
-                "free_cash_flow",
-                "capital_expenditure",
-                "cash_and_equivalents",
-                "total_debt",
-                "shareholders_equity",
-                "outstanding_shares",
-                "research_and_development",
-                "goodwill_and_intangible_assets",
-            ],
-            end_date,
-            period="annual",
-            limit=10  # Munger examines long-term trends
-        )
-        
+        progress.update_status("charlie_munger_agent", ticker, "Fetching crypto metrics")
+        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)
+
         progress.update_status("charlie_munger_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
-        
-        progress.update_status("charlie_munger_agent", ticker, "Fetching insider trades")
-        # Munger values management with skin in the game
-        insider_trades = get_insider_trades(
-            ticker,
-            end_date,
-            # Look back 2 years for insider trading patterns
-            start_date=None,
-            limit=100
-        )
-        
+
         progress.update_status("charlie_munger_agent", ticker, "Fetching company news")
-        # Munger avoids businesses with frequent negative press
-        company_news = get_company_news(
-            ticker,
-            end_date,
-            # Look back 1 year for news
-            start_date=None,
-            limit=100
-        )
-        
-        progress.update_status("charlie_munger_agent", ticker, "Analyzing moat strength")
-        moat_analysis = analyze_moat_strength(metrics, financial_line_items)
-        
-        progress.update_status("charlie_munger_agent", ticker, "Analyzing management quality")
-        management_analysis = analyze_management_quality(financial_line_items, insider_trades)
-        
-        progress.update_status("charlie_munger_agent", ticker, "Analyzing business predictability")
-        predictability_analysis = analyze_predictability(financial_line_items)
-        
-        progress.update_status("charlie_munger_agent", ticker, "Calculating Munger-style valuation")
-        valuation_analysis = calculate_munger_valuation(financial_line_items, market_cap)
-        
-        # Combine partial scores with Munger's weighting preferences
-        # Munger weights quality and predictability higher than current valuation
+        company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
+
+        progress.update_status("charlie_munger_agent", ticker, "Analyzing network moat")
+        moat_analysis = analyze_moat_strength(metrics)
+
+        progress.update_status("charlie_munger_agent", ticker, "Analyzing community quality")
+        management_analysis = analyze_management_quality(metrics)
+
+        progress.update_status("charlie_munger_agent", ticker, "Analyzing price predictability")
+        predictability_analysis = analyze_predictability(metrics)
+
+        progress.update_status("charlie_munger_agent", ticker, "Calculating on-chain valuation")
+        valuation_analysis = calculate_munger_valuation(metrics)
+
+        progress.update_status("charlie_munger_agent", ticker, "Analyzing news sentiment")
+        news_sentiment = analyze_news_sentiment(company_news)
+
         total_score = (
             moat_analysis["score"] * 0.35 +
             management_analysis["score"] * 0.25 +
             predictability_analysis["score"] * 0.25 +
             valuation_analysis["score"] * 0.15
         )
-        
-        max_possible_score = 10  # Scale to 0-10
-        
-        # Generate a simple buy/hold/sell signal
-        if total_score >= 7.5:  # Munger has very high standards
+        max_possible_score = 10
+
+        if total_score >= 7.5:
             signal = "bullish"
         elif total_score <= 4.5:
             signal = "bearish"
         else:
             signal = "neutral"
-        
+
         analysis_data[ticker] = {
             "signal": signal,
             "score": total_score,
@@ -116,39 +73,33 @@ def charlie_munger_agent(state: AgentState):
             "management_analysis": management_analysis,
             "predictability_analysis": predictability_analysis,
             "valuation_analysis": valuation_analysis,
-            # Include some qualitative assessment from news
-            "news_sentiment": analyze_news_sentiment(company_news) if company_news else "No news data available"
+            "news_sentiment": news_sentiment
         }
-        
+
         progress.update_status("charlie_munger_agent", ticker, "Generating Charlie Munger analysis")
         munger_output = generate_munger_output(
-            ticker=ticker, 
+            ticker=ticker,
             analysis_data=analysis_data,
             model_name=state["metadata"]["model_name"],
             model_provider=state["metadata"]["model_provider"],
         )
-        
+
         munger_analysis[ticker] = {
             "signal": munger_output.signal,
             "confidence": munger_output.confidence,
             "reasoning": munger_output.reasoning
         }
-        
         progress.update_status("charlie_munger_agent", ticker, "Done")
-    
-    # Wrap results in a single message for the chain
+
     message = HumanMessage(
         content=json.dumps(munger_analysis),
         name="charlie_munger_agent"
     )
-    
-    # Show reasoning if requested
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(munger_analysis, "Charlie Munger Agent")
-    
-    # Add signals to the overall state
-    state["data"]["analyst_signals"]["charlie_munger_agent"] = munger_analysis
 
+    if state["metadata"].get("show_reasoning"):
+        show_agent_reasoning(munger_analysis, "Charlie Munger Agent")
+
+    state["data"]["analyst_signals"]["charlie_munger_agent"] = munger_analysis
     return {
         "messages": [message],
         "data": state["data"]
@@ -647,16 +598,19 @@ def calculate_munger_valuation(financial_line_items: list, market_cap: float) ->
     }
 
 
-def analyze_news_sentiment(news_items: list) -> str:
+def analyze_news_sentiment(news_items: list) -> dict:
     """
-    Simple qualitative analysis of recent news.
-    Munger pays attention to significant news but doesn't overreact to short-term stories.
+    Analyze crypto news sentiment (positive vs negative coverage).
     """
-    if not news_items or len(news_items) == 0:
-        return "No news data available"
-    
-    # Just return a simple count for now - in a real implementation, this would use NLP
-    return f"Qualitative review of {len(news_items)} recent news items would be needed"
+    if not news_items:
+        return {"score": 0, "details": "No news available"}
+    pos = sum(1 for n in news_items if n.get("sentiment") == "positive")
+    neg = sum(1 for n in news_items if n.get("sentiment") == "negative")
+    total = len(news_items)
+    # scale (pos - neg)/total to 0–10 range
+    score = ((pos - neg) / total) * 5 + 5
+    details = f"{pos}/{total} positive, {neg}/{total} negative"
+    return {"score": score, "details": details}
 
 
 def generate_munger_output(
@@ -666,60 +620,45 @@ def generate_munger_output(
     model_provider: str,
 ) -> CharlieMungerSignal:
     """
-    Generates investment decisions in the style of Charlie Munger.
+    Generates crypto investment decisions in the style of Charlie Munger.
     """
     template = ChatPromptTemplate.from_messages([
         (
             "system",
-            """You are a Charlie Munger AI agent, making investment decisions using his principles:
+            """You are a Charlie Munger AI agent, making investment decisions on cryptocurrency assets using his principles:
 
-            1. Focus on the quality and predictability of the business.
-            2. Rely on mental models from multiple disciplines to analyze investments.
-            3. Look for strong, durable competitive advantages (moats).
-            4. Emphasize long-term thinking and patience.
-            5. Value management integrity and competence.
-            6. Prioritize businesses with high returns on invested capital.
-            7. Pay a fair price for wonderful businesses.
-            8. Never overpay, always demand a margin of safety.
-            9. Avoid complexity and businesses you don't understand.
-            10. "Invert, always invert" - focus on avoiding stupidity rather than seeking brilliance.
-            
-            Rules:
-            - Praise businesses with predictable, consistent operations and cash flows.
-            - Value businesses with high ROIC and pricing power.
-            - Prefer simple businesses with understandable economics.
-            - Admire management with skin in the game and shareholder-friendly capital allocation.
-            - Focus on long-term economics rather than short-term metrics.
-            - Be skeptical of businesses with rapidly changing dynamics or excessive share dilution.
-            - Avoid excessive leverage or financial engineering.
-            - Provide a rational, data-driven recommendation (bullish, bearish, or neutral).
-            
-            When providing your reasoning, be thorough and specific by:
-            1. Explaining the key factors that influenced your decision the most (both positive and negative)
-            2. Applying at least 2-3 specific mental models or disciplines to explain your thinking
-            3. Providing quantitative evidence where relevant (e.g., specific ROIC values, margin trends)
-            4. Citing what you would "avoid" in your analysis (invert the problem)
-            5. Using Charlie Munger's direct, pithy conversational style in your explanation
-            
-            For example, if bullish: "The high ROIC of 22% demonstrates the company's moat. When applying basic microeconomics, we can see that competitors would struggle to..."
-            For example, if bearish: "I see this business making a classic mistake in capital allocation. As I've often said about [relevant Mungerism], this company appears to be..."
-            """
+1. Focus on durable network effects and on-chain moats.
+2. Emphasize community quality and developer ecosystem strength.
+3. Value price stability and predictability in a volatile market.
+4. Prefer tokenomics with low dilution and fair supply dynamics.
+5. Demand a margin of safety based on on-chain usage metrics.
+6. Incorporate recent news sentiment analysis into your assessment.
+7. Avoid overly complex or unproven protocols.
+8. Use mental models to invert and avoid mistakes.
+
+Rules:
+- Highlight network moat indicators (volume/market-cap, dev activity).
+- Assess community sentiment metrics (upvotes, followers).
+- Evaluate tokenomics: supply caps, dilution risk.
+- Consider news sentiment: positive vs negative coverage.
+- Provide a data-driven recommendation (bullish, bearish, or neutral).
+
+When reasoning, cite at least one on-chain metric and one news sentiment insight.
+For example, if bullish: “Volume/MC of 6% and 80% positive news signal strong adoption…”
+If bearish: “60-day volatility of 35% and 30% negative news indicate weak fundamentals…”"""
         ),
         (
             "human",
-            """Based on the following analysis, create a Munger-style investment signal.
+            """Based on the following analysis for {ticker}:
+{analysis_data}
 
-            Analysis Data for {ticker}:
-            {analysis_data}
-
-            Return the trading signal in this JSON format:
-            {{
-              "signal": "bullish/bearish/neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """
-        )
+Return JSON:
+{
+  "signal": "bullish/bearish/neutral",
+  "confidence": float (0–100),
+  "reasoning": "string"
+}"""
+        ),
     ])
 
     prompt = template.invoke({
@@ -727,18 +666,18 @@ def generate_munger_output(
         "ticker": ticker
     })
 
-    def create_default_charlie_munger_signal():
+    def default_signal():
         return CharlieMungerSignal(
             signal="neutral",
             confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
+            reasoning="Defaulting to neutral due to missing data"
         )
 
     return call_llm(
-        prompt=prompt, 
-        model_name=model_name, 
-        model_provider=model_provider, 
-        pydantic_model=CharlieMungerSignal, 
-        agent_name="charlie_munger_agent", 
-        default_factory=create_default_charlie_munger_signal,
+        prompt=prompt,
+        model_name=model_name,
+        model_provider=model_provider,
+        pydantic_model=CharlieMungerSignal,
+        agent_name="charlie_munger_agent",
+        default_factory=default_signal,
     )

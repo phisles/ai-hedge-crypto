@@ -42,26 +42,55 @@ class MichaelBurrySignal(BaseModel):
 ###############################################################################
 
 
-def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine here)
-    """Analyse stocks using Michael Burry's deep‑value, contrarian framework."""
-
+def michael_burry_agent(state: AgentState):  # noqa: C901
+    """Analyse stocks and crypto using Michael Burry's deep-value, contrarian framework."""
     data = state["data"]
-    end_date: str = data["end_date"]  # YYYY‑MM‑DD
+    end_date: str = data["end_date"]
     tickers: list[str] = data["tickers"]
-
-    # We look one year back for insider trades / news flow
     start_date = (datetime.fromisoformat(end_date) - timedelta(days=365)).date().isoformat()
 
     analysis_data: dict[str, dict] = {}
     burry_analysis: dict[str, dict] = {}
 
     for ticker in tickers:
-        # ------------------------------------------------------------------
-        # Fetch raw data
-        # ------------------------------------------------------------------
+        # Fetch metrics
         progress.update_status("michael_burry_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5)
 
+        # —— CRYPTO BRANCH START —— 
+        if ticker.upper().endswith(("/USD", "-USD")) and metrics:
+            latest = metrics[0]
+            pct1y     = latest.get("price_change_pct_1y", 0.0)
+            sentiment = latest.get("sentiment_votes_up_pct", 0.0)
+            dev_stars = latest.get("developer_stars", 0)
+
+            score = 0
+            if pct1y > 0.50:        score += 2
+            elif pct1y > 0.20:      score += 1
+            if sentiment > 60:      score += 1
+            if dev_stars > 20000:   score += 1
+
+            if score >= 3:
+                sig = "bullish"
+            elif score == 0:
+                sig = "bearish"
+            else:
+                sig = "neutral"
+
+            conf = round(min(score / 4, 1.0) * 100)
+            burry_analysis[ticker] = {
+                "signal": sig,
+                "confidence": conf,
+                "reasoning": (
+                    f"1y Δ {pct1y:.1%}, sentiment {sentiment:.1f}%, "
+                    f"dev stars {dev_stars}"
+                )
+            }
+            progress.update_status("michael_burry_agent", ticker, "Done (crypto)")
+            continue
+        # —— CRYPTO BRANCH END —— 
+
+        # Equity path
         progress.update_status("michael_burry_agent", ticker, "Fetching line items")
         line_items = search_line_items(
             ticker,
@@ -87,9 +116,6 @@ def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine h
         progress.update_status("michael_burry_agent", ticker, "Fetching market cap")
         market_cap = get_market_cap(ticker, end_date)
 
-        # ------------------------------------------------------------------
-        # Run sub‑analyses
-        # ------------------------------------------------------------------
         progress.update_status("michael_burry_agent", ticker, "Analyzing value")
         value_analysis = _analyze_value(metrics, line_items, market_cap)
 
@@ -102,9 +128,6 @@ def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine h
         progress.update_status("michael_burry_agent", ticker, "Analyzing contrarian sentiment")
         contrarian_analysis = _analyze_contrarian_sentiment(news)
 
-        # ------------------------------------------------------------------
-        # Aggregate score & derive preliminary signal
-        # ------------------------------------------------------------------
         total_score = (
             value_analysis["score"]
             + balance_sheet_analysis["score"]
@@ -125,9 +148,6 @@ def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine h
         else:
             signal = "neutral"
 
-        # ------------------------------------------------------------------
-        # Collect data for LLM reasoning & output
-        # ------------------------------------------------------------------
         analysis_data[ticker] = {
             "signal": signal,
             "score": total_score,
@@ -155,16 +175,12 @@ def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine h
 
         progress.update_status("michael_burry_agent", ticker, "Done")
 
-    # ----------------------------------------------------------------------
-    # Return to the graph
-    # ----------------------------------------------------------------------
     message = HumanMessage(content=json.dumps(burry_analysis), name="michael_burry_agent")
 
     if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(burry_analysis, "Michael Burry Agent")
 
     state["data"]["analyst_signals"]["michael_burry_agent"] = burry_analysis
-
     return {"messages": [message], "data": state["data"]}
 
 
@@ -330,53 +346,58 @@ def _generate_burry_output(
     model_name: str,
     model_provider: str,
 ) -> MichaelBurrySignal:
-    """Call the LLM to craft the final trading signal in Burry's voice."""
+    """Call the LLM to craft the final trading signal in Burry's voice, adapted for crypto."""
 
     template = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                """You are an AI agent emulating Dr. Michael J. Burry. Your mandate:
-                - Hunt for deep value in US equities using hard numbers (free cash flow, EV/EBIT, balance sheet)
-                - Be contrarian: hatred in the press can be your friend if fundamentals are solid
-                - Focus on downside first – avoid leveraged balance sheets
-                - Look for hard catalysts such as insider buying, buybacks, or asset sales
-                - Communicate in Burry's terse, data‑driven style
+                """You are an AI agent emulating Dr. Michael J. Burry, focused on cryptocurrency deep-value contrarian analysis. Your mandate:
+- Hunt for on-chain value using hard metrics (NVT ratio, volume/market-cap, staking yields).
+- Be contrarian: significant negative sentiment or down markets can be buying opportunities if fundamentals hold.
+- Focus on downside risk first—avoid assets with excessive dilution or governance risk.
+- Look for hard catalysts: mainnet upgrades, protocol revenue growth, or large token burns.
+- Communicate in Burry’s terse, data-driven style.
 
-                When providing your reasoning, be thorough and specific by:
-                1. Start with the key metric(s) that drove your decision
-                2. Cite concrete numbers (e.g. "FCF yield 14.7%", "EV/EBIT 5.3")
-                3. Highlight risk factors and why they are acceptable (or not)
-                4. Mention relevant insider activity or contrarian opportunities
-                5. Use Burry's direct, number-focused communication style with minimal words
-                
-                For example, if bullish: "FCF yield 12.8%. EV/EBIT 6.2. Debt-to-equity 0.4. Net insider buying 25k shares. Market missing value due to overreaction to recent litigation. Strong buy."
-                For example, if bearish: "FCF yield only 2.1%. Debt-to-equity concerning at 2.3. Management diluting shareholders. Pass."
-                """,
+When providing your reasoning, be thorough and specific by:
+1. Start with the key on-chain metric(s) that drove your decision (e.g., “NVT 30, vol/MC 5%”).
+2. Cite concrete numbers (e.g., “1y price change −12.3%”, “developer stars 45k”).
+3. Highlight risk factors and why they may be acceptable (or not) in a contrarian context.
+4. Mention relevant community or protocol events (e.g., “50k negative headlines; contrarian buy”).
+5. Use Burry’s direct, number-focused communication style with minimal words.
+
+For example, if bullish:  
+“NVT ratio 28. Vol/MC 6%. 1y Δ −15%. Developer stars 52k. Network revenue up 30% QoQ. Negative press crowded out value. Strong buy.”
+
+If bearish:  
+“NVT ratio 60. Vol/MC 1%. 1y Δ +5%. Token burns minimal. High dilution risk. Pass.”"""
             ),
             (
                 "human",
-                """Based on the following data, create the investment signal as Michael Burry would:
+                """Based on the following on-chain and sentiment data for crypto {ticker}:
+{analysis_data}
 
-                Analysis Data for {ticker}:
-                {analysis_data}
-
-                Return the trading signal in the following JSON format exactly:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": float between 0 and 100,
-                  "reasoning": "string"
-                }}
-                """,
+Return the trading signal exactly in this JSON format:
+{
+  "signal": "bullish" | "bearish" | "neutral",
+  "confidence": float between 0 and 100,
+  "reasoning": "string"
+}"""
             ),
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({
+        "analysis_data": json.dumps(analysis_data, indent=2),
+        "ticker": ticker
+    })
 
-    # Default fallback signal in case parsing fails
     def create_default_michael_burry_signal():
-        return MichaelBurrySignal(signal="neutral", confidence=0.0, reasoning="Parsing error – defaulting to neutral")
+        return MichaelBurrySignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Parsing error – defaulting to neutral"
+        )
 
     return call_llm(
         prompt=prompt,

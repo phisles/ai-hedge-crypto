@@ -64,7 +64,7 @@ def bill_ackman_agent(state: AgentState):
         balance_sheet_analysis = analyze_financial_discipline(metrics, financial_line_items)
         
         progress.update_status("bill_ackman_agent", ticker, "Analyzing activism potential")
-        activism_analysis = analyze_activism_potential(financial_line_items)
+        activism_analysis = analyze_activism_potential(financial_line_items, metrics)
         
         progress.update_status("bill_ackman_agent", ticker, "Calculating intrinsic value & margin of safety")
         valuation_analysis = analyze_valuation(financial_line_items, market_cap)
@@ -189,13 +189,17 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     
     # 3. Return on Equity (ROE) check from the latest metrics
     latest_metrics = metrics[0]
-    if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
-        score += 2
-        details.append(f"High ROE of {latest_metrics.return_on_equity:.1%}, indicating a competitive advantage.")
-    elif latest_metrics.return_on_equity:
-        details.append(f"ROE of {latest_metrics.return_on_equity:.1%} is moderate.")
+    if latest_metrics.price_to_sales_ratio and isinstance(latest_metrics.price_to_sales_ratio, (int, float)) and latest_metrics.price_to_sales_ratio < 50:
+        score += 1
+        details.append(f"Healthy price-to-sales ratio: {latest_metrics.price_to_sales_ratio:.2f}")
     else:
-        details.append("ROE data not available.")
+        details.append("No P/S data or ratio is too high.")
+    # Developer activity
+    if latest_metrics.developer_stars and latest_metrics.developer_stars > 5000:
+        score += 1
+        details.append(f"Strong developer support: {latest_metrics.developer_stars} GitHub stars.")
+    else:
+        details.append("Weak or unknown developer activity.")
     
     # 4. (Optional) Brand Intangible (if intangible_assets are fetched)
     # intangible_vals = [item.intangible_assets for item in financial_line_items if item.intangible_assets]
@@ -210,184 +214,82 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
 
 
 def analyze_financial_discipline(metrics: list, financial_line_items: list) -> dict:
-    """
-    Evaluate the company's balance sheet over multiple periods:
-    - Debt ratio trends
-    - Capital returns to shareholders over time (dividends, buybacks)
-    """
     score = 0
     details = []
-    
-    if not metrics or not financial_line_items:
+
+    latest = financial_line_items[-1] if financial_line_items else None
+    if not latest or not metrics:
+        return {"score": 0, "details": "Insufficient data for crypto financial discipline"}
+
+    # Token supply growth (less inflation = better)
+    if latest.circulating_supply and latest.total_supply and latest.total_supply > 0:
+        inflation_rate = (latest.total_supply - latest.circulating_supply) / latest.total_supply
+        if inflation_rate < 0.05:
+            score += 1
+            details.append(f"Low inflation: only {inflation_rate*100:.2f}% of tokens remain uncirculated.")
+        else:
+            details.append(f"Token inflation may be high ({inflation_rate*100:.2f}% remaining).")
+
+    # Price stability check (rough volatility proxy)
+    if metrics[0].price_change_pct_60d and abs(metrics[0].price_change_pct_60d) < 20:
+        score += 1
+        details.append(f"Moderate 60-day price volatility: {metrics[0].price_change_pct_60d:.2f}%")
+    else:
+        details.append("High 60-day price volatility.")
+
+    return {"score": score, "details": "; ".join(details)}
+
+
+def analyze_activism_potential(financial_line_items: list, metrics: list) -> dict:
+    """
+    In crypto, we interpret 'activism potential' as:
+    - Short-term weakness despite strong long-term trend.
+    - Potential for catalysts like upgrades, listings, or improved tokenomics.
+    """
+
+    if not metrics or len(metrics) == 0:
         return {
             "score": 0,
-            "details": "Insufficient data to analyze financial discipline"
+            "details": "No metrics available for activism-style signal."
         }
-    
-    # 1. Multi-period debt ratio or debt_to_equity
-    debt_to_equity_vals = [item.debt_to_equity for item in financial_line_items if item.debt_to_equity is not None]
-    if debt_to_equity_vals:
-        below_one_count = sum(1 for d in debt_to_equity_vals if d < 1.0)
-        if below_one_count >= (len(debt_to_equity_vals) // 2 + 1):
+
+    m = metrics[0]  # Use most recent
+
+    long_term = m.price_change_pct_60d
+    short_term = m.price_change_pct_7d
+
+    score = 0
+    details = []
+
+    if long_term and short_term:
+        if long_term > 10 and short_term < -2:
             score += 2
-            details.append("Debt-to-equity < 1.0 for the majority of periods (reasonable leverage).")
+            details.append(
+                f"Strong long-term trend ({long_term:.1f}%) with recent pullback ({short_term:.1f}%) — possible reentry/catalyst zone."
+            )
         else:
-            details.append("Debt-to-equity >= 1.0 in many periods (could be high leverage).")
+            details.append("No significant divergence between long- and short-term price action.")
     else:
-        # Fallback to total_liabilities / total_assets
-        liab_to_assets = []
-        for item in financial_line_items:
-            if item.total_liabilities and item.total_assets and item.total_assets > 0:
-                liab_to_assets.append(item.total_liabilities / item.total_assets)
-        
-        if liab_to_assets:
-            below_50pct_count = sum(1 for ratio in liab_to_assets if ratio < 0.5)
-            if below_50pct_count >= (len(liab_to_assets) // 2 + 1):
-                score += 2
-                details.append("Liabilities-to-assets < 50% for majority of periods.")
-            else:
-                details.append("Liabilities-to-assets >= 50% in many periods.")
-        else:
-            details.append("No consistent leverage ratio data available.")
-    
-    # 2. Capital allocation approach (dividends + share counts)
-    dividends_list = [
-        item.dividends_and_other_cash_distributions
-        for item in financial_line_items
-        if item.dividends_and_other_cash_distributions is not None
-    ]
-    if dividends_list:
-        paying_dividends_count = sum(1 for d in dividends_list if d < 0)
-        if paying_dividends_count >= (len(dividends_list) // 2 + 1):
-            score += 1
-            details.append("Company has a history of returning capital to shareholders (dividends).")
-        else:
-            details.append("Dividends not consistently paid or no data on distributions.")
-    else:
-        details.append("No dividend data found across periods.")
-    
-    # Check for decreasing share count (simple approach)
-    shares = [item.outstanding_shares for item in financial_line_items if item.outstanding_shares is not None]
-    if len(shares) >= 2:
-        if shares[-1] < shares[0]:
-            score += 1
-            details.append("Outstanding shares have decreased over time (possible buybacks).")
-        else:
-            details.append("Outstanding shares have not decreased over the available periods.")
-    else:
-        details.append("No multi-period share count data to assess buybacks.")
-    
-    return {
-        "score": score,
-        "details": "; ".join(details)
-    }
+        details.append("Missing 60d or 7d price data.")
 
-
-def analyze_activism_potential(financial_line_items: list) -> dict:
-    """
-    Bill Ackman often engages in activism if a company has a decent brand or moat
-    but is underperforming operationally.
-    
-    We'll do a simplified approach:
-    - Look for positive revenue trends but subpar margins
-    - That may indicate 'activism upside' if operational improvements could unlock value.
-    """
-    if not financial_line_items:
-        return {
-            "score": 0,
-            "details": "Insufficient data for activism potential"
-        }
-    
-    # Check revenue growth vs. operating margin
-    revenues = [item.revenue for item in financial_line_items if item.revenue is not None]
-    op_margins = [item.operating_margin for item in financial_line_items if item.operating_margin is not None]
-    
-    if len(revenues) < 2 or not op_margins:
-        return {
-            "score": 0,
-            "details": "Not enough data to assess activism potential (need multi-year revenue + margins)."
-        }
-    
-    initial, final = revenues[0], revenues[-1]
-    revenue_growth = (final - initial) / abs(initial) if initial else 0
-    avg_margin = sum(op_margins) / len(op_margins)
-    
-    score = 0
-    details = []
-    
-    # Suppose if there's decent revenue growth but margins are below 10%, Ackman might see activism potential.
-    if revenue_growth > 0.15 and avg_margin < 0.10:
-        score += 2
-        details.append(
-            f"Revenue growth is healthy (~{revenue_growth*100:.1f}%), but margins are low (avg {avg_margin*100:.1f}%). "
-            "Activism could unlock margin improvements."
-        )
-    else:
-        details.append("No clear sign of activism opportunity (either margins are already decent or growth is weak).")
-    
     return {"score": score, "details": "; ".join(details)}
 
 
 def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
-    """
-    Ackman invests in companies trading at a discount to intrinsic value.
-    Uses a simplified DCF with FCF as a proxy, plus margin of safety analysis.
-    """
     if not financial_line_items or market_cap is None:
-        return {
-            "score": 0,
-            "details": "Insufficient data to perform valuation"
-        }
-    
+        return {"score": 0, "details": "No data to value crypto asset"}
+
     latest = financial_line_items[-1]
-    fcf = latest.free_cash_flow if latest.free_cash_flow else 0
-    
-    if fcf <= 0:
+    volume = latest.volume_24h if hasattr(latest, "volume_24h") else None
+
+    if volume and market_cap > 0:
+        ratio = volume / market_cap
+        score = 1 if ratio > 0.05 else 0
         return {
-            "score": 0,
-            "details": f"No positive FCF for valuation; FCF = {fcf}",
-            "intrinsic_value": None
+            "score": score,
+            "details": f"Volume-to-market cap ratio: {ratio:.2%} — {'healthy' if score else 'low'} liquidity."
         }
-    
-    # Basic DCF assumptions
-    growth_rate = 0.06
-    discount_rate = 0.10
-    terminal_multiple = 15
-    projection_years = 5
-    
-    present_value = 0
-    for year in range(1, projection_years + 1):
-        future_fcf = fcf * (1 + growth_rate) ** year
-        pv = future_fcf / ((1 + discount_rate) ** year)
-        present_value += pv
-    
-    # Terminal Value
-    terminal_value = (
-        fcf * (1 + growth_rate) ** projection_years * terminal_multiple
-    ) / ((1 + discount_rate) ** projection_years)
-    
-    intrinsic_value = present_value + terminal_value
-    margin_of_safety = (intrinsic_value - market_cap) / market_cap
-    
-    score = 0
-    # Simple scoring
-    if margin_of_safety > 0.3:
-        score += 3
-    elif margin_of_safety > 0.1:
-        score += 1
-    
-    details = [
-        f"Calculated intrinsic value: ~{intrinsic_value:,.2f}",
-        f"Market cap: ~{market_cap:,.2f}",
-        f"Margin of safety: {margin_of_safety:.2%}"
-    ]
-    
-    return {
-        "score": score,
-        "details": "; ".join(details),
-        "intrinsic_value": intrinsic_value,
-        "margin_of_safety": margin_of_safety
-    }
+    return {"score": 0, "details": "Volume or market cap data missing"}
 
 
 def generate_ackman_output(
@@ -404,24 +306,25 @@ def generate_ackman_output(
     template = ChatPromptTemplate.from_messages([
         (
             "system",
-            """You are a Bill Ackman AI agent, making investment decisions using his principles:
+            """You are a Bill Ackman-inspired crypto analyst. Your job is to evaluate cryptocurrency assets using principles adapted from activist investing.
 
-            1. Seek high-quality businesses with durable competitive advantages (moats), often in well-known consumer or service brands.
-            2. Prioritize consistent free cash flow and growth potential over the long term.
-            3. Advocate for strong financial discipline (reasonable leverage, efficient capital allocation).
-            4. Valuation matters: target intrinsic value with a margin of safety.
-            5. Consider activism where management or operational improvements can unlock substantial upside.
-            6. Concentrate on a few high-conviction investments.
+            1. Seek high-quality crypto projects with strong developer communities, network adoption, and utility-based ecosystems.
+            2. Prioritize long-term growth potential, robust market presence, and healthy tokenomics (e.g. controlled supply, strong demand).
+            3. Reward disciplined supply management (low inflation, fixed caps, low dilution).
+            4. Valuation matters: consider metrics like market cap, trading volume, and price-to-sales ratio.
+            5. Look for activist-style opportunities: assets showing long-term strength but short-term weakness or inefficiencies that could be corrected (e.g., underused upgrades, poor listing exposure, or unoptimized token design).
+            6. Focus on a few high-conviction ideas where value can be unlocked.
 
             In your reasoning:
-            - Emphasize brand strength, moat, or unique market positioning.
-            - Review free cash flow generation and margin trends as key signals.
-            - Analyze leverage, share buybacks, and dividends as capital discipline metrics.
-            - Provide a valuation assessment with numerical backup (DCF, multiples, etc.).
-            - Identify any catalysts for activism or value creation (e.g., cost cuts, better capital allocation).
-            - Use a confident, analytic, and sometimes confrontational tone when discussing weaknesses or opportunities.
+            - Emphasize strong network effects, developer activity, and real-world usage.
+            - Review supply inflation, price trends, and volume-to-market-cap ratios as indicators of sustainability.
+            - Use GitHub activity and release momentum to gauge development health.
+            - Avoid or penalize excessive volatility, centralized control, or unclear utility.
+            - Provide a valuation assessment with quantitative support (e.g., P/S ratio, liquidity, market dominance).
+            - Identify any catalysts like protocol upgrades, exchange listings, or upcoming ecosystem expansions.
+            - Use a confident, analytical tone when justifying ratings, and don’t hesitate to flag concerns.
 
-            Return your final recommendation (signal: bullish, neutral, or bearish) with a 0-100 confidence and a thorough reasoning section.
+            Return your final recommendation (signal: bullish, neutral, or bearish) with a 0-100 confidence score and a detailed explanation.
             """
         ),
         (

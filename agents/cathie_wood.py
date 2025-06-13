@@ -16,11 +16,7 @@ class CathieWoodSignal(BaseModel):
 
 def cathie_wood_agent(state: AgentState):
     """
-    Analyzes stocks using Cathie Wood's investing principles and LLM reasoning.
-    1. Prioritizes companies with breakthrough technologies or business models
-    2. Focuses on industries with rapid adoption curves and massive TAM (Total Addressable Market).
-    3. Invests mostly in AI, robotics, genomic sequencing, fintech, and blockchain.
-    4. Willing to endure short-term volatility for long-term gains.
+    Analyzes stocks and crypto using Cathie Wood's investing principles.
     """
     data = state["data"]
     end_date = data["end_date"]
@@ -34,28 +30,29 @@ def cathie_wood_agent(state: AgentState):
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
         progress.update_status("cathie_wood_agent", ticker, "Gathering financial line items")
-        # Request multiple periods of data (annual or TTM) for a more robust view.
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "gross_margin",
-                "operating_margin",
-                "debt_to_equity",
-                "free_cash_flow",
-                "total_assets",
-                "total_liabilities",
-                "dividends_and_other_cash_distributions",
-                "outstanding_shares",
-                "research_and_development",
-                "capital_expenditure",
-                "operating_expense",
-
-            ],
-            end_date,
-            period="annual",
-            limit=5
-        )
+        if ticker.upper().endswith(("/USD", "-USD")):
+            financial_line_items = []
+        else:
+            financial_line_items = search_line_items(
+                ticker,
+                [
+                    "revenue",
+                    "gross_margin",
+                    "operating_margin",
+                    "debt_to_equity",
+                    "free_cash_flow",
+                    "total_assets",
+                    "total_liabilities",
+                    "dividends_and_other_cash_distributions",
+                    "outstanding_shares",
+                    "research_and_development",
+                    "capital_expenditure",
+                    "operating_expense",
+                ],
+                end_date,
+                period="annual",
+                limit=5
+            )
 
         progress.update_status("cathie_wood_agent", ticker, "Getting market cap")
         market_cap = get_market_cap(ticker, end_date)
@@ -69,9 +66,8 @@ def cathie_wood_agent(state: AgentState):
         progress.update_status("cathie_wood_agent", ticker, "Calculating valuation & high-growth scenario")
         valuation_analysis = analyze_cathie_wood_valuation(financial_line_items, market_cap)
 
-        # Combine partial scores or signals
         total_score = disruptive_analysis["score"] + innovation_analysis["score"] + valuation_analysis["score"]
-        max_possible_score = 15  # Adjust weighting as desired
+        max_possible_score = 15
 
         if total_score >= 0.7 * max_possible_score:
             signal = "bullish"
@@ -123,16 +119,29 @@ def cathie_wood_agent(state: AgentState):
 
 def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> dict:
     """
-    Analyze whether the company has disruptive products, technology, or business model.
-    Evaluates multiple dimensions of disruptive potential:
-    1. Revenue Growth Acceleration - indicates market adoption
-    2. R&D Intensity - shows innovation investment
-    3. Gross Margin Trends - suggests pricing power and scalability
-    4. Operating Leverage - demonstrates business model efficiency
-    5. Market Share Dynamics - indicates competitive position
+    Analyze disruptive potential for equities and crypto.
     """
-    score = 0
-    details = []
+    # crypto-specific branch
+    if isinstance(metrics, list) and metrics and metrics[0].get("price_change_pct_30d") is not None:
+        latest = metrics[0]
+        score = 0
+        details = []
+        if latest["price_change_pct_30d"] > 0.20:
+            score += 3
+            details.append(f"Strong 30d price momentum: {latest['price_change_pct_30d']:.2%}")
+        elif latest["price_change_pct_30d"] > 0.10:
+            score += 2
+            details.append(f"Moderate 30d price momentum: {latest['price_change_pct_30d']:.2%}")
+        if latest.get("developer_stars", 0) > 50000:
+            score += 2
+            details.append(f"High developer activity: {latest['developer_stars']} stars")
+        normalized_score = (score / 5) * 5
+        return {
+            "score": normalized_score,
+            "details": "; ".join(details),
+            "raw_score": score,
+            "max_score": 5
+        }
 
     if not metrics or not financial_line_items:
         return {
@@ -140,21 +149,20 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
             "details": "Insufficient data to analyze disruptive potential"
         }
 
-    # 1. Revenue Growth Analysis - Check for accelerating growth
-    revenues = [item.revenue for item in financial_line_items if item.revenue]
-    if len(revenues) >= 3:  # Need at least 3 periods to check acceleration
+    score = 0
+    details = []
+
+    # 1. Revenue Growth Analysis
+    revenues = [item.revenue for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    if len(revenues) >= 3:
         growth_rates = []
         for i in range(len(revenues)-1):
-            if revenues[i] and revenues[i+1]:
-                growth_rate = (revenues[i+1] - revenues[i]) / abs(revenues[i]) if revenues[i] != 0 else 0
-                growth_rates.append(growth_rate)
-
-        # Check if growth is accelerating
+            prev, curr = revenues[i], revenues[i+1]
+            if prev != 0:
+                growth_rates.append((curr - prev) / abs(prev))
         if len(growth_rates) >= 2 and growth_rates[-1] > growth_rates[0]:
             score += 2
             details.append(f"Revenue growth is accelerating: {(growth_rates[-1]*100):.1f}% vs {(growth_rates[0]*100):.1f}%")
-
-        # Check absolute growth rate
         latest_growth = growth_rates[-1] if growth_rates else 0
         if latest_growth > 1.0:
             score += 3
@@ -168,36 +176,27 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     else:
         details.append("Insufficient revenue data for growth analysis")
 
-    # 2. Gross Margin Analysis - Check for expanding margins
-    gross_margins = [item.gross_margin for item in financial_line_items if hasattr(item, 'gross_margin') and item.gross_margin is not None]
+    # 2. Gross Margin Analysis
+    gross_margins = [item.gross_margin for item in financial_line_items if getattr(item, "gross_margin", None) is not None]
     if len(gross_margins) >= 2:
         margin_trend = gross_margins[-1] - gross_margins[0]
-        if margin_trend > 0.05:  # 5% improvement
+        if margin_trend > 0.05:
             score += 2
             details.append(f"Expanding gross margins: +{(margin_trend*100):.1f}%")
         elif margin_trend > 0:
             score += 1
             details.append(f"Slightly improving gross margins: +{(margin_trend*100):.1f}%")
-
-        # Check absolute margin level
-        if gross_margins[-1] > 0.50:  # High margin business
+        if gross_margins[-1] > 0.50:
             score += 2
             details.append(f"High gross margin: {(gross_margins[-1]*100):.1f}%")
     else:
         details.append("Insufficient gross margin data")
 
     # 3. Operating Leverage Analysis
-    revenues = [item.revenue for item in financial_line_items if item.revenue]
-    operating_expenses = [
-        item.operating_expense
-        for item in financial_line_items
-        if hasattr(item, "operating_expense") and item.operating_expense
-    ]
-
+    operating_expenses = [item.operating_expense for item in financial_line_items if getattr(item, "operating_expense", None) is not None]
     if len(revenues) >= 2 and len(operating_expenses) >= 2:
-        rev_growth = (revenues[-1] - revenues[0]) / abs(revenues[0])
-        opex_growth = (operating_expenses[-1] - operating_expenses[0]) / abs(operating_expenses[0])
-
+        rev_growth = (revenues[-1] - revenues[0]) / abs(revenues[0]) if revenues[0] != 0 else 0
+        opex_growth = (operating_expenses[-1] - operating_expenses[0]) / abs(operating_expenses[0]) if operating_expenses[0] != 0 else 0
         if rev_growth > opex_growth:
             score += 2
             details.append("Positive operating leverage: Revenue growing faster than expenses")
@@ -205,10 +204,10 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
         details.append("Insufficient data for operating leverage analysis")
 
     # 4. R&D Investment Analysis
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, 'research_and_development') and item.research_and_development is not None]
+    rd_expenses = [item.research_and_development for item in financial_line_items if getattr(item, "research_and_development", None) is not None]
     if rd_expenses and revenues:
-        rd_intensity = rd_expenses[-1] / revenues[-1]
-        if rd_intensity > 0.15:  # High R&D intensity
+        rd_intensity = rd_expenses[-1] / revenues[-1] if revenues[-1] != 0 else 0
+        if rd_intensity > 0.15:
             score += 3
             details.append(f"High R&D investment: {(rd_intensity*100):.1f}% of revenue")
         elif rd_intensity > 0.08:
@@ -220,15 +219,12 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
     else:
         details.append("No R&D data available")
 
-    # Normalize score to be out of 5
-    max_possible_score = 12  # Sum of all possible points
-    normalized_score = (score / max_possible_score) * 5
-
+    normalized_score = (score / 12) * 5
     return {
         "score": normalized_score,
         "details": "; ".join(details),
         "raw_score": score,
-        "max_score": max_possible_score
+        "max_score": 12
     }
 
 
@@ -425,54 +421,53 @@ def generate_cathie_wood_output(
     model_provider: str,
 ) -> CathieWoodSignal:
     """
-    Generates investment decisions in the style of Cathie Wood.
+    Generates crypto investment decisions in the style of Cathie Wood.
     """
     template = ChatPromptTemplate.from_messages([
         (
             "system",
-            """You are a Cathie Wood AI agent, making investment decisions using her principles:
+            """You are a Cathie Wood AI agent, making investment decisions on cryptocurrency assets using her principles:
 
-            1. Seek companies leveraging disruptive innovation.
-            2. Emphasize exponential growth potential, large TAM.
-            3. Focus on technology, healthcare, or other future-facing sectors.
-            4. Consider multi-year time horizons for potential breakthroughs.
-            5. Accept higher volatility in pursuit of high returns.
-            6. Evaluate management's vision and ability to invest in R&D.
+1. Seek projects leveraging disruptive blockchain or decentralized technologies.
+2. Emphasize exponential network adoption and on-chain activity metrics.
+3. Focus on digital assets with strong developer activity, community growth, and large TAM in Web3.
+4. Consider multi-year time horizons for token adoption and network growth.
+5. Accept higher volatility inherent to crypto in pursuit of high returns.
+6. Evaluate on-chain fundamentals: transaction volume, active addresses, staking metrics, TVL, NVT ratio.
+7. Use a growth-biased valuation approach based on network metrics rather than corporate financials.
 
-            Rules:
-            - Identify disruptive or breakthrough technology.
-            - Evaluate strong potential for multi-year revenue growth.
-            - Check if the company can scale effectively in a large market.
-            - Use a growth-biased valuation approach.
-            - Provide a data-driven recommendation (bullish, bearish, or neutral).
-            
-            When providing your reasoning, be thorough and specific by:
-            1. Identifying the specific disruptive technologies/innovations the company is leveraging
-            2. Highlighting growth metrics that indicate exponential potential (revenue acceleration, expanding TAM)
-            3. Discussing the long-term vision and transformative potential over 5+ year horizons
-            4. Explaining how the company might disrupt traditional industries or create new markets
-            5. Addressing R&D investment and innovation pipeline that could drive future growth
-            6. Using Cathie Wood's optimistic, future-focused, and conviction-driven voice
-            
-            For example, if bullish: "The company's AI-driven platform is transforming the $500B healthcare analytics market, with evidence of platform adoption accelerating from 40% to 65% YoY. Their R&D investments of 22% of revenue are creating a technological moat that positions them to capture a significant share of this expanding market. The current valuation doesn't reflect the exponential growth trajectory we expect as..."
-            For example, if bearish: "While operating in the genomics space, the company lacks truly disruptive technology and is merely incrementally improving existing techniques. R&D spending at only 8% of revenue signals insufficient investment in breakthrough innovation. With revenue growth slowing from 45% to 20% YoY, there's limited evidence of the exponential adoption curve we look for in transformative companies..."
-            """
+Rules:
+- Identify disruptive protocol features or novel consensus mechanisms.
+- Evaluate potential for exponential user adoption and network effects.
+- Check if the tokenomics incentivize long-term participation.
+- Use crypto-centric indicators: TVL growth, user retention, governance engagement.
+- Provide a data-driven recommendation (bullish, bearish, or neutral).
+
+When providing your reasoning, be thorough and specific by:
+1. Highlighting key on-chain adoption trends (active addresses, transaction count).
+2. Discussing ecosystem health (developer contributions, GitHub activity, community size).
+3. Analyzing total value locked or network revenue relative to market cap.
+4. Explaining tokenomics, staking incentives, and supply dynamics.
+5. Addressing governance participation and roadmap execution.
+6. Using Cathie Wood’s optimistic, conviction-driven voice adapted for crypto.
+
+For example, if bullish: “The network’s daily active addresses jumped from 30k to 120k in six months, TVL has grown 70% QoQ, and developer commits rose 40%, signaling rapid adoption in a $1T DeFi market…”  
+If bearish: “Despite high TVL, NVT ratio is elevated, active address growth has plateaued, and developer activity is down 20%, indicating the token may be overvalued relative to its network utility…”"""
         ),
         (
             "human",
-            """Based on the following analysis, create a Cathie Wood-style investment signal.
+            """Based on the following analysis, create a Cathie Wood-style signal for crypto.
 
-            Analysis Data for {ticker}:
-            {analysis_data}
+Analysis Data for {ticker}:
+{analysis_data}
 
-            Return the trading signal in this JSON format:
-            {{
-              "signal": "bullish/bearish/neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """
-        )
+Return the signal as JSON:
+{
+  "signal": "bullish/bearish/neutral",
+  "confidence": float (0–100),
+  "reasoning": "string"
+}"""
+        ),
     ])
 
     prompt = template.invoke({

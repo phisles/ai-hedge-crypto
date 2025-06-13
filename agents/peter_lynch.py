@@ -27,33 +27,72 @@ class PeterLynchSignal(BaseModel):
 
 def peter_lynch_agent(state: AgentState):
     """
-    Analyzes stocks using Peter Lynch's investing principles:
-      - Invest in what you know (clear, understandable businesses).
-      - Growth at a Reasonable Price (GARP), emphasizing the PEG ratio.
-      - Look for consistent revenue & EPS increases and manageable debt.
-      - Be alert for potential "ten-baggers" (high-growth opportunities).
-      - Avoid overly complex or highly leveraged businesses.
-      - Use news sentiment and insider trades for secondary inputs.
-      - If fundamentals strongly align with GARP, be more aggressive.
-
-    The result is a bullish/bearish/neutral signal, along with a
-    confidence (0–100) and a textual reasoning explanation.
+    Analyzes crypto and stocks using Peter Lynch's style, with a full crypto branch.
     """
-
     data = state["data"]
     start_date = data["start_date"]
     end_date = data["end_date"]
     tickers = data["tickers"]
 
-    analysis_data = {}
-    lynch_analysis = {}
+    lynch_analysis: dict[str, dict] = {}
 
     for ticker in tickers:
-        progress.update_status("peter_lynch_agent", ticker, "Fetching financial metrics")
+        progress.update_status("peter_lynch_agent", ticker, "Fetching metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        if not metrics:
+            continue
 
+        # —— CRYPTO BRANCH —— 
+        if ticker.upper().endswith(("/USD", "-USD")):
+            latest = metrics[0]
+            price_30d = latest.get("price_change_pct_30d", 0.0)
+            sentiment_data = analyze_crypto_sentiment_from_metrics(latest)
+            vol_mc = latest.get("volume_to_market_cap", 0.0)
+            dev_stars = latest.get("developer_stars", 0)
+
+            score = 0
+            # 30-day momentum
+            if price_30d > 0.20:
+                score += 2
+            elif price_30d > 0.05:
+                score += 1
+            # community sentiment
+            if sentiment_data["score"] >= 7:
+                score += 1
+            # on-chain usage
+            if vol_mc > 0.03:
+                score += 1
+            # developer interest
+            if dev_stars > 30000:
+                score += 1
+
+            if score >= 4:
+                signal = "bullish"
+            elif score == 0:
+                signal = "bearish"
+            else:
+                signal = "neutral"
+
+            confidence = round(min(score / 5, 1.0) * 100)
+            reasoning_parts = [
+                f"30d Δ {price_30d:.1%}",
+                sentiment_data["details"],
+                f"vol/MC {vol_mc:.1%}",
+                f"dev stars {dev_stars}"
+            ]
+            reasoning = ", ".join(reasoning_parts)
+
+            lynch_analysis[ticker] = {
+                "signal": signal,
+                "confidence": confidence,
+                "reasoning": reasoning
+            }
+            progress.update_status("peter_lynch_agent", ticker, "Done (crypto)")
+            continue
+        # —— END CRYPTO BRANCH —— 
+
+        # —— STOCK PATH (unchanged) —— 
         progress.update_status("peter_lynch_agent", ticker, "Gathering financial line items")
-        # Relevant line items for Peter Lynch's approach
         financial_line_items = search_line_items(
             ticker,
             [
@@ -84,28 +123,15 @@ def peter_lynch_agent(state: AgentState):
         progress.update_status("peter_lynch_agent", ticker, "Fetching company news")
         company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
 
-        progress.update_status("peter_lynch_agent", ticker, "Fetching recent price data for reference")
+        progress.update_status("peter_lynch_agent", ticker, "Fetching recent prices")
         prices = get_prices(ticker, start_date=start_date, end_date=end_date)
 
-        # Perform sub-analyses:
-        progress.update_status("peter_lynch_agent", ticker, "Analyzing growth")
-        growth_analysis = analyze_lynch_growth(financial_line_items)
-
-        progress.update_status("peter_lynch_agent", ticker, "Analyzing fundamentals")
+        growth_analysis       = analyze_lynch_growth(financial_line_items)
         fundamentals_analysis = analyze_lynch_fundamentals(financial_line_items)
+        valuation_analysis    = analyze_lynch_valuation(financial_line_items, market_cap)
+        sentiment_analysis    = analyze_sentiment(company_news)
+        insider_activity      = analyze_insider_activity(insider_trades)
 
-        progress.update_status("peter_lynch_agent", ticker, "Analyzing valuation (focus on PEG)")
-        valuation_analysis = analyze_lynch_valuation(financial_line_items, market_cap)
-
-        progress.update_status("peter_lynch_agent", ticker, "Analyzing sentiment")
-        sentiment_analysis = analyze_sentiment(company_news)
-
-        progress.update_status("peter_lynch_agent", ticker, "Analyzing insider activity")
-        insider_activity = analyze_insider_activity(insider_trades)
-
-        # Combine partial scores with weights typical for Peter Lynch:
-        #   30% Growth, 25% Valuation, 20% Fundamentals,
-        #   15% Sentiment, 10% Insider Activity = 100%
         total_score = (
             growth_analysis["score"] * 0.30
             + valuation_analysis["score"] * 0.25
@@ -113,10 +139,8 @@ def peter_lynch_agent(state: AgentState):
             + sentiment_analysis["score"] * 0.15
             + insider_activity["score"] * 0.10
         )
-
         max_possible_score = 10.0
 
-        # Map final score to signal
         if total_score >= 7.5:
             signal = "bullish"
         elif total_score <= 4.5:
@@ -124,43 +148,29 @@ def peter_lynch_agent(state: AgentState):
         else:
             signal = "neutral"
 
-        analysis_data[ticker] = {
-            "signal": signal,
-            "score": total_score,
-            "max_score": max_possible_score,
-            "growth_analysis": growth_analysis,
-            "valuation_analysis": valuation_analysis,
-            "fundamentals_analysis": fundamentals_analysis,
-            "sentiment_analysis": sentiment_analysis,
-            "insider_activity": insider_activity,
-        }
-
-        progress.update_status("peter_lynch_agent", ticker, "Generating Peter Lynch analysis")
-        lynch_output = generate_lynch_output(
-            ticker=ticker,
-            analysis_data=analysis_data[ticker],
-            model_name=state["metadata"]["model_name"],
-            model_provider=state["metadata"]["model_provider"],
-        )
-
         lynch_analysis[ticker] = {
-            "signal": lynch_output.signal,
-            "confidence": lynch_output.confidence,
-            "reasoning": lynch_output.reasoning,
+            "signal": signal,
+            "confidence": round(total_score / max_possible_score * 100),
+            "reasoning": lynch_output.reasoning if (lynch_output := generate_lynch_output(
+                ticker=ticker,
+                analysis_data={
+                    "growth": growth_analysis,
+                    "valuation": valuation_analysis,
+                    "fundamentals": fundamentals_analysis,
+                    "sentiment": sentiment_analysis,
+                    "insider": insider_activity,
+                },
+                model_name=state["metadata"]["model_name"],
+                model_provider=state["metadata"]["model_provider"],
+            )) else ""
         }
-
         progress.update_status("peter_lynch_agent", ticker, "Done")
-
-    # Wrap up results
-    message = HumanMessage(content=json.dumps(lynch_analysis), name="peter_lynch_agent")
 
     if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(lynch_analysis, "Peter Lynch Agent")
 
-    # Save signals to state
     state["data"]["analyst_signals"]["peter_lynch_agent"] = lynch_analysis
-
-    return {"messages": [message], "data": state["data"]}
+    return {"messages": [HumanMessage(json.dumps(lynch_analysis), "peter_lynch_agent")], "data": state["data"]}
 
 
 def analyze_lynch_growth(financial_line_items: list) -> dict:
@@ -360,35 +370,21 @@ def analyze_lynch_valuation(financial_line_items: list, market_cap: float | None
     return {"score": final_score, "details": "; ".join(details)}
 
 
-def analyze_sentiment(news_items: list) -> dict:
+def analyze_crypto_sentiment_from_metrics(metrics: dict) -> dict:
     """
-    Basic news sentiment check. Negative headlines weigh on the final score.
+    Uses the built-in sentiment_votes_up_pct from your crypto metrics.
+    Maps 0–100% upvotes into a 0–10 score.
     """
-    if not news_items:
-        return {"score": 5, "details": "No news data; default to neutral sentiment"}
+    up_pct = metrics.get("sentiment_votes_up_pct")
+    if up_pct is None:
+        return {"score": 5, "details": "No sentiment data"}
 
-    negative_keywords = ["lawsuit", "fraud", "negative", "downturn", "decline", "investigation", "recall"]
-    negative_count = 0
-    for news in news_items:
-        title_lower = (news.title or "").lower()
-        if any(word in title_lower for word in negative_keywords):
-            negative_count += 1
-
-    details = []
-    if negative_count > len(news_items) * 0.3:
-        # More than 30% negative => somewhat bearish => 3/10
-        score = 3
-        details.append(f"High proportion of negative headlines: {negative_count}/{len(news_items)}")
-    elif negative_count > 0:
-        # Some negativity => 6/10
-        score = 6
-        details.append(f"Some negative headlines: {negative_count}/{len(news_items)}")
-    else:
-        # Mostly positive => 8/10
-        score = 8
-        details.append("Mostly positive or neutral headlines")
-
-    return {"score": score, "details": "; ".join(details)}
+    # 0% → 0, 50% → 5, 100% → 10
+    score = round(up_pct / 10, 1)
+    return {
+        "score": score,
+        "details": f"{up_pct:.1f}% positive community votes"
+    }
 
 
 def analyze_insider_activity(insider_trades: list) -> dict:
@@ -443,58 +439,46 @@ def generate_lynch_output(
     model_provider: str,
 ) -> PeterLynchSignal:
     """
-    Generates a final JSON signal in Peter Lynch's voice & style.
+    Generates a final JSON signal in Peter Lynch's style, adapted for crypto.
     """
     template = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                """You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
-                
-                1. Invest in What You Know: Emphasize understandable businesses, possibly discovered in everyday life.
-                2. Growth at a Reasonable Price (GARP): Rely on the PEG ratio as a prime metric.
-                3. Look for 'Ten-Baggers': Companies capable of growing earnings and share price substantially.
-                4. Steady Growth: Prefer consistent revenue/earnings expansion, less concern about short-term noise.
-                5. Avoid High Debt: Watch for dangerous leverage.
-                6. Management & Story: A good 'story' behind the stock, but not overhyped or too complex.
-                
-                When you provide your reasoning, do it in Peter Lynch's voice:
-                - Cite the PEG ratio
-                - Mention 'ten-bagger' potential if applicable
-                - Refer to personal or anecdotal observations (e.g., "If my kids love the product...")
-                - Use practical, folksy language
-                - Provide key positives and negatives
-                - Conclude with a clear stance (bullish, bearish, or neutral)
-                
-                Return your final output strictly in JSON with the fields:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": 0 to 100,
-                  "reasoning": "string"
-                }}
-                """,
+                """You are a Peter Lynch–style AI agent specializing in cryptocurrency assets.
+
+1. Invest in What You Know: describe clear on-chain use cases and user adoption.
+2. Growth at a Reasonable Price: use on-chain growth metrics like active addresses and TVL.
+3. Seek 'Ten-Baggers': highlight small-cap tokens with high growth runway.
+4. Avoid complexity: watch for risky tokenomics and dilution.
+5. Use community sentiment and developer metrics as secondary checks.
+6. Speak in practical, anecdotal language (“I see DeFi users…”).
+7. Conclude with a clear stance (bullish, bearish, or neutral) and confidence score.
+
+Return only valid JSON with:
+{
+  "signal": "bullish"|"bearish"|"neutral",
+  "confidence": 0–100,
+  "reasoning": "string"
+}"""
             ),
             (
                 "human",
-                """Based on the following analysis data for {ticker}, produce your Peter Lynch–style investment signal.
+                """Based on the following analysis for {ticker}:
+{analysis_data}
 
-                Analysis Data:
-                {analysis_data}
-
-                Return only valid JSON with "signal", "confidence", and "reasoning".
-                """,
+Return your Peter Lynch–style signal exactly as JSON."""
             ),
         ]
     )
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+    prompt = template.invoke({
+        "analysis_data": json.dumps(analysis_data, indent=2),
+        "ticker": ticker
+    })
 
-    def create_default_signal():
-        return PeterLynchSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis; defaulting to neutral"
-        )
+    def default_signal():
+        return PeterLynchSignal(signal="neutral", confidence=0.0, reasoning="Error; defaulting to neutral")
 
     return call_llm(
         prompt=prompt,
@@ -502,5 +486,5 @@ def generate_lynch_output(
         model_provider=model_provider,
         pydantic_model=PeterLynchSignal,
         agent_name="peter_lynch_agent",
-        default_factory=create_default_signal,
+        default_factory=default_signal,
     )

@@ -25,138 +25,86 @@ class StanleyDruckenmillerSignal(BaseModel):
 
 def stanley_druckenmiller_agent(state: AgentState):
     """
-    Analyzes stocks using Stanley Druckenmiller's investing principles:
-      - Seeking asymmetric risk-reward opportunities
-      - Emphasizing growth, momentum, and sentiment
-      - Willing to be aggressive if conditions are favorable
-      - Focus on preserving capital by avoiding high-risk, low-reward bets
-
-    Returns a bullish/bearish/neutral signal with confidence and reasoning.
+    Crypto‐focused Stanley Druckenmiller agent:
+      - Emphasizes price momentum & volatility for asymmetric risk‐reward
+      - Analyzes whale (large‐holder) transactions via get_insider_trades
+      - Assesses crypto news sentiment
+      - Incorporates basic token metrics (market cap, volume)
     """
     data = state["data"]
-    start_date = data["start_date"]
-    end_date = data["end_date"]
+    start_date, end_date = data["start_date"], data["end_date"]
     tickers = data["tickers"]
-
-    analysis_data = {}
     druck_analysis = {}
 
     for ticker in tickers:
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
+        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching on‐chain metrics")
+        metrics_list = get_financial_metrics(ticker)
+        metrics = metrics_list[0] if isinstance(metrics_list, list) and metrics_list else {}
+        market_cap = metrics.get("market_cap")
+        total_volume = metrics.get("total_volume")
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Gathering financial line items")
-        # Include relevant line items for Stan Druckenmiller's approach:
-        #   - Growth & momentum: revenue, EPS, operating_income, ...
-        #   - Valuation: net_income, free_cash_flow, ebit, ebitda
-        #   - Leverage: total_debt, shareholders_equity
-        #   - Liquidity: cash_and_equivalents
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "earnings_per_share",
-                "net_income",
-                "operating_income",
-                "gross_margin",
-                "operating_margin",
-                "free_cash_flow",
-                "capital_expenditure",
-                "cash_and_equivalents",
-                "total_debt",
-                "shareholders_equity",
-                "outstanding_shares",
-                "ebit",
-                "ebitda",
-            ],
-            end_date,
-            period="annual",
-            limit=5,
-        )
+        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching whale trades")
+        whale_trades = get_insider_trades(ticker, end_date, start_date=start_date, limit=50)
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Getting market cap")
-        market_cap = get_market_cap(ticker, end_date)
+        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching crypto news")
+        news = get_company_news(ticker, end_date, start_date=start_date, limit=50)
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching insider trades")
-        insider_trades = get_insider_trades(ticker, end_date, start_date=None, limit=50)
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching company news")
-        company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching recent price data for momentum")
+        progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching price history")
         prices = get_prices(ticker, start_date=start_date, end_date=end_date)
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing growth & momentum")
-        growth_momentum_analysis = analyze_growth_and_momentum(financial_line_items, prices)
+        mom = analyze_momentum(prices)
+        vol = analyze_risk_reward(prices)
+        sent = analyze_sentiment(news)
+        whale = analyze_insider_activity(whale_trades)
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing sentiment")
-        sentiment_analysis = analyze_sentiment(company_news)
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing insider activity")
-        insider_activity = analyze_insider_activity(insider_trades)
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing risk-reward")
-        risk_reward_analysis = analyze_risk_reward(financial_line_items, market_cap, prices)
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Performing Druckenmiller-style valuation")
-        valuation_analysis = analyze_druckenmiller_valuation(financial_line_items, market_cap)
-
-        # Combine partial scores with weights typical for Druckenmiller:
-        #   35% Growth/Momentum, 20% Risk/Reward, 20% Valuation,
-        #   15% Sentiment, 10% Insider Activity = 100%
-        total_score = (
-            growth_momentum_analysis["score"] * 0.35
-            + risk_reward_analysis["score"] * 0.20
-            + valuation_analysis["score"] * 0.20
-            + sentiment_analysis["score"] * 0.15
-            + insider_activity["score"] * 0.10
-        )
-
-        max_possible_score = 10
-
-        # Simple bullish/neutral/bearish signal
-        if total_score >= 7.5:
+        # combine scores: momentum 30%, volatility 30%, sentiment 20%, whale 20%
+        score = mom["score"] * 0.3 + vol["score"] * 0.3 + sent["score"] * 0.2 + whale["score"] * 0.2
+        if score >= 7.5:
             signal = "bullish"
-        elif total_score <= 4.5:
+        elif score <= 4.5:
             signal = "bearish"
         else:
             signal = "neutral"
 
-        analysis_data[ticker] = {
-            "signal": signal,
-            "score": total_score,
-            "max_score": max_possible_score,
-            "growth_momentum_analysis": growth_momentum_analysis,
-            "sentiment_analysis": sentiment_analysis,
-            "insider_activity": insider_activity,
-            "risk_reward_analysis": risk_reward_analysis,
-            "valuation_analysis": valuation_analysis,
-        }
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Generating Stanley Druckenmiller analysis")
-        druck_output = generate_druckenmiller_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            model_name=state["metadata"]["model_name"],
-            model_provider=state["metadata"]["model_provider"],
+        reasoning = (
+            f"Price momentum: {mom['details']}; "
+            f"Volatility: {vol['details']}; "
+            f"Sentiment: {sent['details']}; "
+            f"Whale activity: {whale['details']}"
         )
 
         druck_analysis[ticker] = {
-            "signal": druck_output.signal,
-            "confidence": druck_output.confidence,
-            "reasoning": druck_output.reasoning,
+            "signal": signal,
+            "confidence": round(score * 10, 1),
+            "reasoning": reasoning,
         }
-
         progress.update_status("stanley_druckenmiller_agent", ticker, "Done")
 
-    # Wrap results in a single message
     message = HumanMessage(content=json.dumps(druck_analysis), name="stanley_druckenmiller_agent")
-
     if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(druck_analysis, "Stanley Druckenmiller Agent")
 
     state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = druck_analysis
     return {"messages": [message], "data": state["data"]}
+
+
+def analyze_momentum(prices: list) -> dict:
+    if not prices or len(prices) < 2:
+        return {"score": 5, "details": "Insufficient price data"}
+    sorted_p = sorted(prices, key=lambda p: p.time)
+    start, end = sorted_p[0].close, sorted_p[-1].close
+    if start <= 0:
+        return {"score": 5, "details": "Invalid start price"}
+    pct = (end - start) / start
+    if pct > 0.5:
+        score, details = 10, f"Up {pct:.1%} over period"
+    elif pct > 0.2:
+        score, details = 7, f"Up {pct:.1%} over period"
+    elif pct > 0:
+        score, details = 5, f"Up {pct:.1%} over period"
+    else:
+        score, details = 2, f"Down {pct:.1%} over period"
+    return {"score": score, "details": details}
 
 
 def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dict:
@@ -263,155 +211,58 @@ def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dic
 
 
 def analyze_insider_activity(insider_trades: list) -> dict:
-    """
-    Simple insider-trade analysis:
-      - If there's heavy insider buying, we nudge the score up.
-      - If there's mostly selling, we reduce it.
-      - Otherwise, neutral.
-    """
-    # Default is neutral (5/10).
-    score = 5
-    details = []
-
     if not insider_trades:
-        details.append("No insider trades data; defaulting to neutral")
-        return {"score": score, "details": "; ".join(details)}
-
-    buys, sells = 0, 0
-    for trade in insider_trades:
-        # Use transaction_shares to determine if it's a buy or sell
-        # Negative shares = sell, positive shares = buy
-        if trade.transaction_shares is not None:
-            if trade.transaction_shares > 0:
-                buys += 1
-            elif trade.transaction_shares < 0:
-                sells += 1
-
+        return {"score": 5, "details": "No whale trades data"}
+    buys = sum(1 for t in insider_trades if getattr(t, 'transaction_shares', 0) > 0)
+    sells = sum(1 for t in insider_trades if getattr(t, 'transaction_shares', 0) < 0)
     total = buys + sells
     if total == 0:
-        details.append("No buy/sell transactions found; neutral")
-        return {"score": score, "details": "; ".join(details)}
-
-    buy_ratio = buys / total
-    if buy_ratio > 0.7:
-        # Heavy buying => +3 points from the neutral 5 => 8
-        score = 8
-        details.append(f"Heavy insider buying: {buys} buys vs. {sells} sells")
-    elif buy_ratio > 0.4:
-        # Moderate buying => +1 => 6
-        score = 6
-        details.append(f"Moderate insider buying: {buys} buys vs. {sells} sells")
+        return {"score": 5, "details": "No whale buy/sell detected"}
+    ratio = buys / total
+    if ratio > 0.7:
+        score, details = 8, f"Heavy whale buying: {buys}/{total}"  
+    elif ratio > 0.4:
+        score, details = 6, f"Moderate whale buying: {buys}/{total}"  
     else:
-        # Low insider buying => -1 => 4
-        score = 4
-        details.append(f"Mostly insider selling: {buys} buys vs. {sells} sells")
-
-    return {"score": score, "details": "; ".join(details)}
+        score, details = 4, f"Predominant whale selling: {buys}/{total}"  
+    return {"score": score, "details": details}
 
 
 def analyze_sentiment(news_items: list) -> dict:
-    """
-    Basic news sentiment: negative keyword check vs. overall volume.
-    """
     if not news_items:
-        return {"score": 5, "details": "No news data; defaulting to neutral sentiment"}
-
-    negative_keywords = ["lawsuit", "fraud", "negative", "downturn", "decline", "investigation", "recall"]
-    negative_count = 0
-    for news in news_items:
-        title_lower = (news.title or "").lower()
-        if any(word in title_lower for word in negative_keywords):
-            negative_count += 1
-
-    details = []
-    if negative_count > len(news_items) * 0.3:
-        # More than 30% negative => somewhat bearish => 3/10
-        score = 3
-        details.append(f"High proportion of negative headlines: {negative_count}/{len(news_items)}")
-    elif negative_count > 0:
-        # Some negativity => 6/10
-        score = 6
-        details.append(f"Some negative headlines: {negative_count}/{len(news_items)}")
+        return {"score": 5, "details": "No news data"}
+    neg_kw = ["rug pull", "hack", "fraud", "downturn"]
+    neg = sum(1 for n in news_items if any(w in (n.title or "").lower() for w in neg_kw))
+    total = len(news_items)
+    if neg / total > 0.3:
+        score, details = 2, f"{neg}/{total} negative headlines"
+    elif neg > 0:
+        score, details = 5, f"{neg}/{total} negative headlines"
     else:
-        # Mostly positive => 8/10
-        score = 8
-        details.append("Mostly positive/neutral headlines")
-
-    return {"score": score, "details": "; ".join(details)}
+        score, details = 8, "Mostly positive headlines"
+    return {"score": score, "details": details}
 
 
-def analyze_risk_reward(financial_line_items: list, market_cap: float | None, prices: list) -> dict:
-    """
-    Assesses risk via:
-      - Debt-to-Equity
-      - Price Volatility
-    Aims for strong upside with contained downside.
-    """
-    if not financial_line_items or not prices:
-        return {"score": 0, "details": "Insufficient data for risk-reward analysis"}
-
-    details = []
-    raw_score = 0  # We'll accumulate up to 6 raw points, then scale to 0-10
-
-    #
-    # 1. Debt-to-Equity
-    #
-    debt_values = [fi.total_debt for fi in financial_line_items if fi.total_debt is not None]
-    equity_values = [fi.shareholders_equity for fi in financial_line_items if fi.shareholders_equity is not None]
-
-    if debt_values and equity_values and len(debt_values) == len(equity_values) and len(debt_values) > 0:
-        recent_debt = debt_values[0]
-        recent_equity = equity_values[0] if equity_values[0] else 1e-9
-        de_ratio = recent_debt / recent_equity
-        if de_ratio < 0.3:
-            raw_score += 3
-            details.append(f"Low debt-to-equity: {de_ratio:.2f}")
-        elif de_ratio < 0.7:
-            raw_score += 2
-            details.append(f"Moderate debt-to-equity: {de_ratio:.2f}")
-        elif de_ratio < 1.5:
-            raw_score += 1
-            details.append(f"Somewhat high debt-to-equity: {de_ratio:.2f}")
-        else:
-            details.append(f"High debt-to-equity: {de_ratio:.2f}")
+def analyze_risk_reward(prices: list) -> dict:
+    if not prices or len(prices) < 10:
+        return {"score": 5, "details": "Insufficient data for volatility"}
+    sorted_p = sorted(prices, key=lambda p: p.time)
+    closes = [p.close for p in sorted_p if p.close is not None]
+    returns = []
+    for i in range(1, len(closes)):
+        prev = closes[i - 1]
+        if prev > 0:
+            returns.append((closes[i] - prev) / prev)
+    if not returns:
+        return {"score": 5, "details": "No valid returns"}
+    stdev = statistics.pstdev(returns)
+    if stdev < 0.01:
+        score, details = 8, f"Low vol {stdev:.2%}"  
+    elif stdev < 0.02:
+        score, details = 6, f"Moderate vol {stdev:.2%}"  
     else:
-        details.append("No consistent debt/equity data available.")
-
-    #
-    # 2. Price Volatility
-    #
-    if len(prices) > 10:
-        sorted_prices = sorted(prices, key=lambda p: p.time)
-        close_prices = [p.close for p in sorted_prices if p.close is not None]
-        if len(close_prices) > 10:
-            daily_returns = []
-            for i in range(1, len(close_prices)):
-                prev_close = close_prices[i - 1]
-                if prev_close > 0:
-                    daily_returns.append((close_prices[i] - prev_close) / prev_close)
-            if daily_returns:
-                stdev = statistics.pstdev(daily_returns)  # population stdev
-                if stdev < 0.01:
-                    raw_score += 3
-                    details.append(f"Low volatility: daily returns stdev {stdev:.2%}")
-                elif stdev < 0.02:
-                    raw_score += 2
-                    details.append(f"Moderate volatility: daily returns stdev {stdev:.2%}")
-                elif stdev < 0.04:
-                    raw_score += 1
-                    details.append(f"High volatility: daily returns stdev {stdev:.2%}")
-                else:
-                    details.append(f"Very high volatility: daily returns stdev {stdev:.2%}")
-            else:
-                details.append("Insufficient daily returns data for volatility calc.")
-        else:
-            details.append("Not enough close-price data points for volatility analysis.")
-    else:
-        details.append("Not enough price data for volatility analysis.")
-
-    # raw_score out of 6 => scale to 0–10
-    final_score = min(10, (raw_score / 6) * 10)
-    return {"score": final_score, "details": "; ".join(details)}
+        score, details = 3, f"High vol {stdev:.2%}"  
+    return {"score": score, "details": details}
 
 
 def analyze_druckenmiller_valuation(financial_line_items: list, market_cap: float | None) -> dict:
@@ -525,71 +376,59 @@ def generate_druckenmiller_output(
     model_provider: str,
 ) -> StanleyDruckenmillerSignal:
     """
-    Generates a JSON signal in the style of Stanley Druckenmiller.
+    Generates a JSON signal in the style of crypto-adapted Stanley Druckenmiller.
     """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-              "system",
-              """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
-            
-              1. Seek asymmetric risk-reward opportunities (large upside, limited downside).
-              2. Emphasize growth, momentum, and market sentiment.
-              3. Preserve capital by avoiding major drawdowns.
-              4. Willing to pay higher valuations for true growth leaders.
-              5. Be aggressive when conviction is high.
-              6. Cut losses quickly if the thesis changes.
-                            
-              Rules:
-              - Reward companies showing strong revenue/earnings growth and positive stock momentum.
-              - Evaluate sentiment and insider activity as supportive or contradictory signals.
-              - Watch out for high leverage or extreme volatility that threatens capital.
-              - Output a JSON object with signal, confidence, and a reasoning string.
-              
-              When providing your reasoning, be thorough and specific by:
-              1. Explaining the growth and momentum metrics that most influenced your decision
-              2. Highlighting the risk-reward profile with specific numerical evidence
-              3. Discussing market sentiment and catalysts that could drive price action
-              4. Addressing both upside potential and downside risks
-              5. Providing specific valuation context relative to growth prospects
-              6. Using Stanley Druckenmiller's decisive, momentum-focused, and conviction-driven voice
-              
-              For example, if bullish: "The company shows exceptional momentum with revenue accelerating from 22% to 35% YoY and the stock up 28% over the past three months. Risk-reward is highly asymmetric with 70% upside potential based on FCF multiple expansion and only 15% downside risk given the strong balance sheet with 3x cash-to-debt. Insider buying and positive market sentiment provide additional tailwinds..."
-              For example, if bearish: "Despite recent stock momentum, revenue growth has decelerated from 30% to 12% YoY, and operating margins are contracting. The risk-reward proposition is unfavorable with limited 10% upside potential against 40% downside risk. The competitive landscape is intensifying, and insider selling suggests waning confidence. I'm seeing better opportunities elsewhere with more favorable setups..."
-              """,
-            ),
-            (
-              "human",
-              """Based on the following analysis, create a Druckenmiller-style investment signal.
+    template = ChatPromptTemplate.from_messages([
+        ("system",
+         """
+You are a crypto-focused Stanley Druckenmiller AI agent, making investment decisions for digital assets using these principles:
 
-              Analysis Data for {ticker}:
-              {analysis_data}
+1. Seek asymmetric risk-reward: large upside, controlled downside.
+2. Emphasize price momentum and on-chain adoption metrics.
+3. Factor in network fundamentals: active addresses, transaction volume, dev activity.
+4. Incorporate tokenomics: circulating supply changes, staking yields, inflation.
+5. Analyze whale transaction flows for institutional signals.
+6. Evaluate crypto market sentiment: news headlines and social trends.
+7. Preserve capital by avoiding extreme volatility and drawdowns.
+8. Be aggressive when conviction and on-chain signals align.
+9. Cut losses quickly when momentum and fundamentals falter.
 
-              Return the trading signal in this JSON format:
-              {{
-                "signal": "bullish/bearish/neutral",
-                "confidence": float (0-100),
-                "reasoning": "string"
-              }}
-              """,
-            ),
-        ]
-    )
+Rules:
+- Reward tokens with strong momentum and improving on-chain metrics.
+- Penalize assets with high volatility or negative on-chain signals.
+- Reference specific numeric values from analysis_data in your reasoning.
+- Output strictly JSON: {"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}
 
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
+When reasoning:
+- Cite price change percentages and volatility stats.
+- Mention whale buy/sell ratios.
+- Highlight key on-chain metrics (address growth, volume).
+- Address macro catalysts or regulatory risks.
+- Use a decisive, conviction-driven tone.
 
-    def create_default_signal():
-        return StanleyDruckenmillerSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
+Example bullish reasoning:
+"The token rallied 35% over the past month on 60% increase in active addresses. Daily volatility is low at 1.2% stdev, and whale flows show net buys of 80% of transactions. News sentiment is bullish around upcoming network upgrade. Risk-reward remains asymmetric with 70% upside potential vs 15% downside given strong tokenomics."
 
+Example bearish reasoning:
+"Despite 20% rally, active addresses declined by 10% and daily volatility spiked to 4.5% stdev. Whale trades show 70% net sells, and negative headlines around regulatory scrutiny persist. Downside risk of 40% outweighs limited upside."
+"""),
+        ("human",
+         """
+Based on the analysis data for {ticker}:
+{analysis_data}
+
+Return the signal in JSON:
+{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}
+"""),
+    ])
+    prompt = template.invoke({"ticker": ticker, "analysis_data": json.dumps(analysis_data, indent=2)})
+    def default():
+        return StanleyDruckenmillerSignal(signal="neutral", confidence=0.0, reasoning="Error; default neutral")
     return call_llm(
         prompt=prompt,
         model_name=model_name,
         model_provider=model_provider,
         pydantic_model=StanleyDruckenmillerSignal,
         agent_name="stanley_druckenmiller_agent",
-        default_factory=create_default_signal,
+        default_factory=default,
     )

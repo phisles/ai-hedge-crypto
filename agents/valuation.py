@@ -6,35 +6,39 @@ import json
 from tools.api import get_financial_metrics, get_market_cap, search_line_items
 
 
-##### Valuation Agent #####
+##### Crypto Valuation Agent #####
 def valuation_agent(state: AgentState):
-    """Performs detailed valuation analysis using multiple methodologies for multiple tickers."""
+    """
+    Performs detailed valuation analysis for crypto assets using a mix of:
+      - Traditional on-chain valuation (NVT, address growth, developer activity)
+      - Classical DCF and Owner Earnings methods where applicable
+    """
     data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
+    end_date = data.get("end_date")
+    tickers = data.get("tickers", [])
 
-    # Initialize valuation analysis for each ticker
     valuation_analysis = {}
 
     for ticker in tickers:
-        progress.update_status("valuation_agent", ticker, "Fetching financial data")
-
-        # Fetch the financial metrics
-        financial_metrics = get_financial_metrics(
+        progress.update_status("valuation_agent", ticker, "Fetching on-chain metrics")
+        # On-chain metrics via financial API
+        crypto_metrics = get_financial_metrics(
             ticker=ticker,
             end_date=end_date,
             period="ttm",
         )
-
-        # Add safety check for financial metrics
-        if not financial_metrics:
-            progress.update_status("valuation_agent", ticker, "Failed: No financial metrics found")
+        if not crypto_metrics:
+            progress.update_status("valuation_agent", ticker, "Failed: No on-chain metrics found")
             continue
-        
-        metrics = financial_metrics[0]
+        cm = crypto_metrics[0]
 
-        progress.update_status("valuation_agent", ticker, "Gathering line items")
-        # Fetch the specific line_items that we need for valuation purposes
+        market_cap_onchain = cm.get("market_cap", 0.0)
+        total_volume = cm.get("total_volume", 0.0)
+        addr_growth = cm.get("active_addresses_24h")
+        dev_activity = cm.get("developer_activity")
+
+        # Traditional financial metrics fallback
+        progress.update_status("valuation_agent", ticker, "Fetching financial line items")
         financial_line_items = search_line_items(
             ticker=ticker,
             line_items=[
@@ -49,97 +53,87 @@ def valuation_agent(state: AgentState):
             limit=2,
         )
 
-        # Add safety check for financial line items
-        if len(financial_line_items) < 2:
-            progress.update_status("valuation_agent", ticker, "Failed: Insufficient financial line items")
-            continue
+        # Compute Owner Earnings & DCF if line items exist
+        owner_earnings_value = 0.0
+        dcf_value = 0.0
+        if len(financial_line_items) >= 2:
+            cur = financial_line_items[0]
+            prev = financial_line_items[1]
+            wc_change = cur.working_capital - prev.working_capital
+            owner_earnings_value = calculate_owner_earnings_value(
+                net_income=cur.net_income,
+                depreciation=cur.depreciation_and_amortization,
+                capex=cur.capital_expenditure,
+                working_capital_change=wc_change,
+                growth_rate=cm.get("earnings_growth", 0.0),
+                required_return=0.15,
+                margin_of_safety=0.25,
+            )
+            dcf_value = calculate_intrinsic_value(
+                free_cash_flow=cur.free_cash_flow or 0.0,
+                growth_rate=cm.get("earnings_growth", 0.0),
+                discount_rate=0.10,
+                terminal_growth_rate=0.03,
+                num_years=5,
+            )
 
-        # Pull the current and previous financial line items
-        current_financial_line_item = financial_line_items[0]
-        previous_financial_line_item = financial_line_items[1]
+        # Combine crypto and traditional valuations
+        # 50% weight on NVT, 25% on Owner Earnings, 25% on DCF
+        nvt_ratio = None
+        if total_volume > 0:
+            nvt_ratio = market_cap_onchain / total_volume
+        # Score each component
+        nvt_score = 0.0
+        if nvt_ratio is not None:
+            if nvt_ratio < 20:
+                nvt_score = 1.0
+            elif nvt_ratio > 80:
+                nvt_score = -1.0
+        oe_score = 0.0 if owner_earnings_value == 0 or market_cap_onchain == 0 else (owner_earnings_value - market_cap_onchain) / market_cap_onchain
+        dcf_score = 0.0 if dcf_value == 0 or market_cap_onchain == 0 else (dcf_value - market_cap_onchain) / market_cap_onchain
 
-        progress.update_status("valuation_agent", ticker, "Calculating owner earnings")
-        # Calculate working capital change
-        working_capital_change = current_financial_line_item.working_capital - previous_financial_line_item.working_capital
-
-        # Owner Earnings Valuation (Buffett Method)
-        owner_earnings_value = calculate_owner_earnings_value(
-            net_income=current_financial_line_item.net_income,
-            depreciation=current_financial_line_item.depreciation_and_amortization,
-            capex=current_financial_line_item.capital_expenditure,
-            working_capital_change=working_capital_change,
-            growth_rate=metrics.earnings_growth,
-            required_return=0.15,
-            margin_of_safety=0.25,
+        combined_score = (
+            (nvt_score) * 0.50
+            + oe_score * 0.25
+            + dcf_score * 0.25
         )
 
-        progress.update_status("valuation_agent", ticker, "Calculating DCF value")
-        # DCF Valuation
-        dcf_value = calculate_intrinsic_value(
-            free_cash_flow=current_financial_line_item.free_cash_flow,
-            growth_rate=metrics.earnings_growth,
-            discount_rate=0.10,
-            terminal_growth_rate=0.03,
-            num_years=5,
-        )
-
-        progress.update_status("valuation_agent", ticker, "Comparing to market value")
-        # Get the market cap
-        market_cap = get_market_cap(ticker=ticker, end_date=end_date)
-
-        # Calculate combined valuation gap (average of both methods)
-        dcf_gap = (dcf_value - market_cap) / market_cap
-        owner_earnings_gap = (owner_earnings_value - market_cap) / market_cap
-        valuation_gap = (dcf_gap + owner_earnings_gap) / 2
-
-        if valuation_gap > 0.15:  # More than 15% undervalued
+        if combined_score > 0.15:
             signal = "bullish"
-        elif valuation_gap < -0.15:  # More than 15% overvalued
+        elif combined_score < -0.15:
             signal = "bearish"
         else:
             signal = "neutral"
 
-        # Create the reasoning
-        reasoning = {}
-        reasoning["dcf_analysis"] = {
-            "signal": ("bullish" if dcf_gap > 0.15 else "bearish" if dcf_gap < -0.15 else "neutral"),
-            "details": f"Intrinsic Value: ${dcf_value:,.2f}, Market Cap: ${market_cap:,.2f}, Gap: {dcf_gap:.1%}",
-        }
-
-        reasoning["owner_earnings_analysis"] = {
-            "signal": ("bullish" if owner_earnings_gap > 0.15 else "bearish" if owner_earnings_gap < -0.15 else "neutral"),
-            "details": f"Owner Earnings Value: ${owner_earnings_value:,.2f}, Market Cap: ${market_cap:,.2f}, Gap: {owner_earnings_gap:.1%}",
-        }
-
-        # Calculate confidence as a percentage between 0 and 100
-        # The higher the absolute valuation gap, the higher the confidence, but capped at 100%
-        # Use 0.30 (30%) as the maximum gap that corresponds to 100% confidence
-        confidence = min(abs(valuation_gap) / 0.30 * 100, 100)
+        # Confidence is abs(combined_score)/0.30 capped at 100%
+        confidence = min(abs(combined_score) / 0.30 * 100, 100)
         confidence = round(confidence)
+
+        # Build reasoning
+        reasoning = {
+            "nvt_ratio": f"{nvt_ratio:.1f}" if nvt_ratio is not None else "N/A",
+            "owner_earnings_value": owner_earnings_value,
+            "dcf_value": dcf_value,
+            "thresholds": "NVT<20 bullish, >80 bearish; gap>15% bullish/bearish",
+            "active_addresses_24h": addr_growth,
+            "developer_activity": dev_activity,
+        }
+
         valuation_analysis[ticker] = {
             "signal": signal,
             "confidence": confidence,
             "reasoning": reasoning,
         }
-
         progress.update_status("valuation_agent", ticker, "Done")
 
     message = HumanMessage(
         content=json.dumps(valuation_analysis),
         name="valuation_agent",
     )
-
-    # Print the reasoning if the flag is set
-    if state["metadata"]["show_reasoning"]:
+    if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(valuation_analysis, "Valuation Analysis Agent")
-
-    # Add the signal to the analyst_signals list
     state["data"]["analyst_signals"]["valuation_agent"] = valuation_analysis
-
-    return {
-        "messages": [message],
-        "data": data,
-    }
+    return {"messages": [message], "data": data}
 
 
 def calculate_owner_earnings_value(
@@ -152,53 +146,21 @@ def calculate_owner_earnings_value(
     margin_of_safety: float = 0.25,
     num_years: int = 5,
 ) -> float:
-    """
-    Calculates the intrinsic value using Buffett's Owner Earnings method.
-
-    Owner Earnings = Net Income
-                    + Depreciation/Amortization
-                    - Capital Expenditures
-                    - Working Capital Changes
-
-    Args:
-        net_income: Annual net income
-        depreciation: Annual depreciation and amortization
-        capex: Annual capital expenditures
-        working_capital_change: Annual change in working capital
-        growth_rate: Expected growth rate
-        required_return: Required rate of return (Buffett typically uses 15%)
-        margin_of_safety: Margin of safety to apply to final value
-        num_years: Number of years to project
-
-    Returns:
-        float: Intrinsic value with margin of safety
-    """
-    if not all([isinstance(x, (int, float)) for x in [net_income, depreciation, capex, working_capital_change]]):
-        return 0
-
-    # Calculate initial owner earnings
+    if not all(isinstance(x, (int, float)) for x in [net_income, depreciation, capex, working_capital_change]):
+        return 0.0
     owner_earnings = net_income + depreciation - capex - working_capital_change
-
     if owner_earnings <= 0:
-        return 0
-
-    # Project future owner earnings
+        return 0.0
     future_values = []
     for year in range(1, num_years + 1):
-        future_value = owner_earnings * (1 + growth_rate) ** year
-        discounted_value = future_value / (1 + required_return) ** year
-        future_values.append(discounted_value)
-
-    # Calculate terminal value (using perpetuity growth formula)
-    terminal_growth = min(growth_rate, 0.03)  # Cap terminal growth at 3%
-    terminal_value = (future_values[-1] * (1 + terminal_growth)) / (required_return - terminal_growth)
-    terminal_value_discounted = terminal_value / (1 + required_return) ** num_years
-
-    # Sum all values and apply margin of safety
-    intrinsic_value = sum(future_values) + terminal_value_discounted
-    value_with_safety_margin = intrinsic_value * (1 - margin_of_safety)
-
-    return value_with_safety_margin
+        fv = owner_earnings * (1 + growth_rate) ** year
+        dv = fv / (1 + required_return) ** year
+        future_values.append(dv)
+    terminal_growth = min(growth_rate, 0.03)
+    terminal = (future_values[-1] * (1 + terminal_growth)) / (required_return - terminal_growth)
+    terminal_discounted = terminal / (1 + required_return) ** num_years
+    intrinsic = sum(future_values) + terminal_discounted
+    return intrinsic * (1 - margin_of_safety)
 
 
 def calculate_intrinsic_value(
@@ -208,43 +170,15 @@ def calculate_intrinsic_value(
     terminal_growth_rate: float = 0.02,
     num_years: int = 5,
 ) -> float:
-    """
-    Computes the discounted cash flow (DCF) for a given company based on the current free cash flow.
-    Use this function to calculate the intrinsic value of a stock.
-    """
-    # Estimate the future cash flows based on the growth rate
-    cash_flows = [free_cash_flow * (1 + growth_rate) ** i for i in range(num_years)]
-
-    # Calculate the present value of projected cash flows
-    present_values = []
-    for i in range(num_years):
-        present_value = cash_flows[i] / (1 + discount_rate) ** (i + 1)
-        present_values.append(present_value)
-
-    # Calculate the terminal value
-    terminal_value = cash_flows[-1] * (1 + terminal_growth_rate) / (discount_rate - terminal_growth_rate)
-    terminal_present_value = terminal_value / (1 + discount_rate) ** num_years
-
-    # Sum up the present values and terminal value
-    dcf_value = sum(present_values) + terminal_present_value
-
-    return dcf_value
+    cash_flows = [free_cash_flow * (1 + growth_rate) ** i for i in range(1, num_years + 1)]
+    pv = [cf / (1 + discount_rate) ** idx for idx, cf in enumerate(cash_flows, start=1)]
+    terminal = cash_flows[-1] * (1 + terminal_growth_rate) / (discount_rate - terminal_growth_rate)
+    terminal_pv = terminal / (1 + discount_rate) ** num_years
+    return sum(pv) + terminal_pv
 
 
 def calculate_working_capital_change(
     current_working_capital: float,
     previous_working_capital: float,
 ) -> float:
-    """
-    Calculate the absolute change in working capital between two periods.
-    A positive change means more capital is tied up in working capital (cash outflow).
-    A negative change means less capital is tied up (cash inflow).
-
-    Args:
-        current_working_capital: Current period's working capital
-        previous_working_capital: Previous period's working capital
-
-    Returns:
-        float: Change in working capital (current - previous)
-    """
     return current_working_capital - previous_working_capital
