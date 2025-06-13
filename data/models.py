@@ -71,10 +71,11 @@ class LineItem(BaseModel):
     period: str
     currency: str
 
-    free_cash_flow: float | None = None  # ← Add this line
+    free_cash_flow: float | None = None
 
-    # Allow additional fields dynamically
-    model_config = {"extra": "allow"}
+    model_config = {
+        "extra": "allow"
+    }
 
 
 class LineItemResponse(BaseModel):
@@ -149,3 +150,11 @@ class AgentStateData(BaseModel):
 class AgentStateMetadata(BaseModel):
     show_reasoning: bool = False
     model_config = {"extra": "allow"}
+
+from pydantic import BaseModel
+from typing_extensions import Literal
+
+class PeterLynchSignal(BaseModel):
+    signal: Literal["bullish", "bearish", "neutral"]
+    confidence: float
+    reasoning: str

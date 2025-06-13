@@ -8,6 +8,7 @@ import json
 from typing_extensions import Literal
 from utils.progress import progress
 from utils.llm import call_llm
+from data.models import LineItem
 
 
 class BillAckmanSignal(BaseModel):
@@ -139,20 +140,28 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     """
     score = 0
     details = []
-    
+
     if not metrics or not financial_line_items:
         return {
             "score": 0,
             "details": "Insufficient data to analyze business quality"
         }
-    
+
+    # ─── DEBUG: show exactly which fields each LineItem has ─────────────────────
+    for item in financial_line_items:
+        print(f"🔍 {item.ticker} payload keys:", item.__dict__.keys())
+
     # 1. Multi-period revenue growth analysis
-    revenues = [item.revenue for item in financial_line_items if item.revenue is not None]
+    revenues = [
+        getattr(item, "revenue", None)
+        for item in financial_line_items
+        if getattr(item, "revenue", None) is not None
+    ]
     if len(revenues) >= 2:
         initial, final = revenues[0], revenues[-1]
         if initial and final and final > initial:
             growth_rate = (final - initial) / abs(initial)
-            if growth_rate > 0.5:  # e.g., 50% cumulative growth
+            if growth_rate > 0.5:
                 score += 2
                 details.append(f"Revenue grew by {(growth_rate*100):.1f}% over the full period (strong growth).")
             else:
@@ -162,11 +171,19 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
             details.append("Revenue did not grow significantly or data insufficient.")
     else:
         details.append("Not enough revenue data for multi-period trend.")
-    
+
     # 2. Operating margin and free cash flow consistency
-    fcf_vals = [item.free_cash_flow for item in financial_line_items if item.free_cash_flow is not None]
-    op_margin_vals = [item.operating_margin for item in financial_line_items if item.operating_margin is not None]
-    
+    fcf_vals = [
+        getattr(item, "free_cash_flow", None)
+        for item in financial_line_items
+        if getattr(item, "free_cash_flow", None) is not None
+    ]
+    op_margin_vals = [
+        getattr(item, "operating_margin", None)
+        for item in financial_line_items
+        if getattr(item, "operating_margin", None) is not None
+    ]
+
     if op_margin_vals:
         above_15 = sum(1 for m in op_margin_vals if m > 0.15)
         if above_15 >= (len(op_margin_vals) // 2 + 1):
@@ -176,7 +193,7 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
             details.append("Operating margin not consistently above 15%.")
     else:
         details.append("No operating margin data across periods.")
-    
+
     if fcf_vals:
         positive_fcf_count = sum(1 for f in fcf_vals if f > 0)
         if positive_fcf_count >= (len(fcf_vals) // 2 + 1):
@@ -186,94 +203,177 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
             details.append("Free cash flow not consistently positive.")
     else:
         details.append("No free cash flow data across periods.")
-    
+
     # 3. Return on Equity (ROE) check from the latest metrics
-    latest_metrics = metrics[0]
-    if latest_metrics.price_to_sales_ratio and isinstance(latest_metrics.price_to_sales_ratio, (int, float)) and latest_metrics.price_to_sales_ratio < 50:
+    latest = metrics[0]
+    if isinstance(latest, dict):
+        ps_ratio  = latest.get("price_to_sales_ratio")
+        dev_stars = latest.get("developer_stars")
+    else:
+        ps_ratio  = getattr(latest, "price_to_sales_ratio", None)
+        dev_stars = getattr(latest, "developer_stars", None)
+
+    if isinstance(ps_ratio, (int, float)) and ps_ratio < 50:
         score += 1
-        details.append(f"Healthy price-to-sales ratio: {latest_metrics.price_to_sales_ratio:.2f}")
+        details.append(f"Healthy price-to-sales ratio: {ps_ratio:.2f}")
     else:
         details.append("No P/S data or ratio is too high.")
+
     # Developer activity
-    if latest_metrics.developer_stars and latest_metrics.developer_stars > 5000:
+    if isinstance(dev_stars, (int, float)) and dev_stars > 5000:
         score += 1
-        details.append(f"Strong developer support: {latest_metrics.developer_stars} GitHub stars.")
+        details.append(f"Strong developer support: {dev_stars} GitHub stars.")
     else:
         details.append("Weak or unknown developer activity.")
-    
+
     # 4. (Optional) Brand Intangible (if intangible_assets are fetched)
-    # intangible_vals = [item.intangible_assets for item in financial_line_items if item.intangible_assets]
-    # if intangible_vals and sum(intangible_vals) > 0:
-    #     details.append("Significant intangible assets may indicate brand value or proprietary tech.")
+    # intangible_vals = [getattr(item, "intangible_assets", 0) for item in financial_line_items]
+    # if any(intangible_vals):
     #     score += 1
-    
+    #     details.append("Significant intangible assets may indicate brand value or proprietary tech.")
+
     return {
         "score": score,
         "details": "; ".join(details)
     }
 
 
-def analyze_financial_discipline(metrics: list, financial_line_items: list) -> dict:
+def analyze_financial_discipline(metrics: list[dict], financial_line_items: list) -> dict:
+    """
+    Assess the project’s financial discipline — inflation control (circulating vs total supply),
+    leverage (debt vs assets), and other balance‐sheet metrics.
+    """
     score = 0
     details = []
 
-    latest = financial_line_items[-1] if financial_line_items else None
-    if not latest or not metrics:
-        return {"score": 0, "details": "Insufficient data for crypto financial discipline"}
-
-    # Token supply growth (less inflation = better)
-    if latest.circulating_supply and latest.total_supply and latest.total_supply > 0:
-        inflation_rate = (latest.total_supply - latest.circulating_supply) / latest.total_supply
-        if inflation_rate < 0.05:
-            score += 1
-            details.append(f"Low inflation: only {inflation_rate*100:.2f}% of tokens remain uncirculated.")
-        else:
-            details.append(f"Token inflation may be high ({inflation_rate*100:.2f}% remaining).")
-
-    # Price stability check (rough volatility proxy)
-    if metrics[0].price_change_pct_60d and abs(metrics[0].price_change_pct_60d) < 20:
-        score += 1
-        details.append(f"Moderate 60-day price volatility: {metrics[0].price_change_pct_60d:.2f}%")
-    else:
-        details.append("High 60-day price volatility.")
-
-    return {"score": score, "details": "; ".join(details)}
-
-
-def analyze_activism_potential(financial_line_items: list, metrics: list) -> dict:
-    """
-    In crypto, we interpret 'activism potential' as:
-    - Short-term weakness despite strong long-term trend.
-    - Potential for catalysts like upgrades, listings, or improved tokenomics.
-    """
-
-    if not metrics or len(metrics) == 0:
+    if not metrics or not financial_line_items:
         return {
             "score": 0,
-            "details": "No metrics available for activism-style signal."
+            "details": "Insufficient data to analyze financial discipline"
         }
 
-    m = metrics[0]  # Use most recent
+    # latest metrics is a dict
+    latest = metrics[0]
+    # DEBUG: show what keys we actually have
+    print("🔍 Latest metrics keys:", list(latest.keys()))
 
-    long_term = m.price_change_pct_60d
-    short_term = m.price_change_pct_7d
+    # 1) Inflation control: circulating_supply / total_supply
+    circ = latest.get("circulating_supply")
+    tot  = latest.get("total_supply")
+    if isinstance(circ, (int, float)) and isinstance(tot, (int, float)) and tot > 0:
+        ratio = circ / tot
+        print(f"🔍 Supply ratio circ/total: {ratio:.3f}")
+        if ratio < 0.7:
+            score += 1
+            details.append(f"Low inflation: only {ratio:.0%} of tokens are circulating.")
+        else:
+            details.append(f"High inflation: {ratio:.0%} circulating.")
+    else:
+        details.append("No supply data available for inflation check.")
 
+    # 2) Leverage: look for 'debt' and 'assets' on the first line item
+    sample_li = financial_line_items[0]
+    # DEBUG: show which dynamic fields were loaded on LineItem
+    print("🔍 LineItem fields:", sample_li.__dict__.keys())
+
+    debt   = sample_li.__dict__.get("debt")
+    assets = sample_li.__dict__.get("assets")
+    if isinstance(debt, (int, float)) and isinstance(assets, (int, float)) and assets > 0:
+        lev = debt / assets
+        print(f"🔍 Debt/assets ratio: {lev:.3f}")
+        if lev < 0.5:
+            score += 1
+            details.append(f"Conservative leverage: debt/assets {lev:.2f}.")
+        else:
+            details.append(f"High leverage: debt/assets {lev:.2f}.")
+    else:
+        details.append("No debt/assets data available.")
+
+    # (You can add more checks here...)
+
+    return {
+        "score": score,
+        "details": "; ".join(details)
+    }
+
+
+# at top of agents/bill_ackman.py
+from data.models import LineItem
+
+def analyze_activism_potential(
+    financial_line_items: list[LineItem],
+    metrics: list[dict],
+) -> dict:
+    """
+    Estimate how attractive the company is as an activist target by
+    looking for undervaluation, under‐performing assets, or activist‐friendly
+    balance‐sheet setups.
+    """
     score = 0
     details = []
 
-    if long_term and short_term:
-        if long_term > 10 and short_term < -2:
-            score += 2
-            details.append(
-                f"Strong long-term trend ({long_term:.1f}%) with recent pullback ({short_term:.1f}%) — possible reentry/catalyst zone."
-            )
+    # 1. Under‐performance vs peers: look at 60d and 1y price change
+    if metrics:
+        latest = metrics[0]
+        pct60 = latest.get("price_change_pct_60d")
+        pct1y = latest.get("price_change_pct_1y")
+        if isinstance(pct60, (int, float)) and pct60 < 0:
+            score += 1
+            details.append(f"Price down {pct60*100:.1f}% over 60d (potential undervaluation).")
         else:
-            details.append("No significant divergence between long- and short-term price action.")
+            details.append("No 60d underperformance signal.")
+        if isinstance(pct1y, (int, float)) and pct1y < 0:
+            score += 1
+            details.append(f"Price down {pct1y*100:.1f}% over 1y (longer‐term malaise).")
+        else:
+            details.append("No 1y underperformance signal.")
     else:
-        details.append("Missing 60d or 7d price data.")
+        details.append("No market‐data metrics available for activism check.")
 
-    return {"score": score, "details": "; ".join(details)}
+    # 2. Balance sheet liquidity: current ratio from the latest line‐item
+    if financial_line_items:
+        latest_li = financial_line_items[-1]
+        if isinstance(latest_li, dict):
+            cr = latest_li.get("current_ratio")
+        else:
+            cr = getattr(latest_li, "current_ratio", None)
 
+        if isinstance(cr, (int, float)):
+            if cr > 1.5:
+                score += 1
+                details.append(f"Strong liquidity (current ratio {cr:.2f}).")
+            else:
+                details.append(f"Modest liquidity (current ratio {cr:.2f}).")
+        else:
+            details.append("No current ratio available.")
+    else:
+        details.append("No balance‐sheet line items for liquidity check.")
+
+    # 3. Leverage: debt/assets from the latest line‐item
+    if financial_line_items:
+        latest_li = financial_line_items[-1]
+        if isinstance(latest_li, dict):
+            debt = latest_li.get("debt")
+            assets = latest_li.get("assets")
+        else:
+            debt = getattr(latest_li, "debt", None)
+            assets = getattr(latest_li, "assets", None)
+
+        if isinstance(debt, (int, float)) and isinstance(assets, (int, float)) and assets > 0:
+            lev = debt / assets
+            if lev < 0.5:
+                score += 1
+                details.append(f"Conservative leverage (debt/assets {lev:.2f}).")
+            else:
+                details.append(f"High leverage (debt/assets {lev:.2f}).")
+        else:
+            details.append("No debt/assets data for leverage check.")
+    # if no financial_line_items, already covered above
+
+    return {
+        "score": score,
+        "details": "; ".join(details)
+    }
 
 def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
     if not financial_line_items or market_cap is None:

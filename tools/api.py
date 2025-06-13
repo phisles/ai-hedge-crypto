@@ -689,16 +689,15 @@ def classify_sentiment(text: str) -> str:
     sentiment = response.choices[0].message.content.strip().lower()
     return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
 
-_news_in_progress = {}
 def get_company_news(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[CompanyNews]:
     """Fetch company news using Alpaca API with cache and per-ticker locking."""
     from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
     from data.cache import get_cache, get_lock
 
     cache = get_cache()
-    lock = get_lock(ticker)
-
     symbol = ticker.replace("/", "").replace("-", "").upper()
+
+    lock = get_lock(symbol)  # <- must lock on the normalized symbol, not raw ticker
 
     with lock:
         # Check cache first

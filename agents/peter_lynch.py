@@ -447,6 +447,11 @@ def analyze_insider_activity(insider_trades: list) -> dict:
     return {"score": score, "details": "; ".join(details)}
 
 
+from langchain_core.prompts import ChatPromptTemplate
+import json
+from utils.llm import call_llm
+from data.models import PeterLynchSignal
+
 def generate_lynch_output(
     ticker: str,
     analysis_data: dict[str, any],
@@ -456,6 +461,7 @@ def generate_lynch_output(
     """
     Generates a final JSON signal in Peter Lynch's style, adapted for crypto.
     """
+    # 1) Build the system+human prompt template
     template = ChatPromptTemplate.from_messages(
         [
             (
@@ -487,14 +493,21 @@ Return your Peter Lynch–style signal exactly as JSON."""
         ]
     )
 
+    # 2) Fill in the template
     prompt = template.invoke({
-        "analysis_data": json.dumps(analysis_data, indent=2),
-        "ticker": ticker
+        "ticker": ticker,
+        "analysis_data": json.dumps(analysis_data, indent=2)
     })
 
+    # 3) Default in case the LLM call fails
     def default_signal():
-        return PeterLynchSignal(signal="neutral", confidence=0.0, reasoning="Error; defaulting to neutral")
+        return PeterLynchSignal(
+            signal="neutral",
+            confidence=0.0,
+            reasoning="Error in analysis; defaulting to neutral"
+        )
 
+    # 4) Call the LLM and parse into our Pydantic model
     return call_llm(
         prompt=prompt,
         model_name=model_name,
