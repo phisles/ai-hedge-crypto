@@ -1,18 +1,45 @@
-"""Constants and utilities related to analysts configuration."""
+
+
+print("\n📦 Initializing ANALYST_CONFIG...")
 
 from agents.ben_graham import ben_graham_agent
+print("✅ ben_graham_agent loaded")
+
 from agents.bill_ackman import bill_ackman_agent
+print("✅ bill_ackman_agent loaded")
+
 from agents.cathie_wood import cathie_wood_agent
+print("✅ cathie_wood_agent loaded")
+
 from agents.charlie_munger import charlie_munger_agent
+print("✅ charlie_munger_agent loaded")
+
 from agents.fundamentals import fundamentals_agent
+print("✅ fundamentals_agent loaded")
+
 from agents.michael_burry import michael_burry_agent
+print("✅ michael_burry_agent loaded")
+
 from agents.phil_fisher import phil_fisher_agent
+print("✅ phil_fisher_agent loaded")
+
 from agents.peter_lynch import peter_lynch_agent
+print("✅ peter_lynch_agent loaded")
+
 from agents.sentiment import sentiment_agent
+print("✅ sentiment_agent loaded")
+
 from agents.stanley_druckenmiller import stanley_druckenmiller_agent
+print("✅ stanley_druckenmiller_agent loaded")
+
 from agents.technicals import technical_analyst_agent
+print("✅ technical_analyst_agent loaded")
+
 from agents.valuation import valuation_agent
+print("✅ valuation_agent loaded")
+
 from agents.warren_buffett import warren_buffett_agent
+print("✅ warren_buffett_agent loaded")
 
 # Define analyst configuration - single source of truth
 ANALYST_CONFIG = {

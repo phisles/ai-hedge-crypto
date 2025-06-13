@@ -1,4 +1,16 @@
+from datetime import datetime, timedelta
+import sys
+from openai import OpenAI
 import os
+import json
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from config2 import APCA_API_KEY_ID
+alpaca_key = APCA_API_KEY_ID
+
+from config2 import OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 import pandas as pd
 import requests
 import time  # if not already imported
@@ -17,120 +29,409 @@ from data.models import (
     InsiderTradeResponse,
 )
 
+COINGECKO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "DOGE": "dogecoin",
+    "ADA": "cardano",
+    "AVAX": "avalanche-2",
+    "LINK": "chainlink",
+    "MATIC": "polygon",
+    "LTC": "litecoin",
+    "BCH": "bitcoin-cash",
+    # Add more as needed
+}
+
 # Global cache instance
 _cache = get_cache()
 
+def fetch_with_retry(url, max_retries=5, delay=30):
+    for attempt in range(max_retries):
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 429:
+            print(f"⏳ CoinGecko rate limit hit. Retrying in {delay}s (attempt {attempt+1}/{max_retries})...")
+            time.sleep(delay)
+        else:
+            print(f"❌ HTTP {response.status_code} for {url}: {response.text}")
+            break
+    print("🛑 Max retries exceeded for CoinGecko.")
+    return None
 
 def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
-    """Fetch price data from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_prices(ticker):
-        # Filter cached data by date range and convert to Price objects
-        filtered_data = [Price(**price) for price in cached_data if start_date <= price["time"] <= end_date]
-        if filtered_data:
-            return filtered_data
+    """Fetch historical daily close prices from Gemini API."""
+    import datetime
+    import time
 
-    # If not in cache or no data in range, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
+    # Convert ticker like "BTC/USD" or "BTC-USD" → "btcusd"
+    symbol = ticker.replace("/", "").replace("-", "").lower()
 
-    url = f"https://api.financialdatasets.ai/prices/?ticker={ticker}&interval=day&interval_multiplier=1&start_date={start_date}&end_date={end_date}"
-    max_retries = 10
-    base_wait = 5  # starting delay in seconds
-    
-    retry_attempt = 1
-    while retry_attempt <= max_retries:
-        try:
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                break
-            elif response.status_code == 429:
-                retry_after_header = response.headers.get("Retry-After")
-                wait = int(retry_after_header) if retry_after_header else base_wait * (2 ** (retry_attempt - 1))
-                print(f"⚠️ Rate limit hit for {ticker} (Prices). Retrying in {wait}s... (Attempt {retry_attempt}/{max_retries})")
-                time.sleep(wait)
-                retry_attempt += 1
-            else:
-                raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
-        except requests.exceptions.RequestException as e:
-            wait = base_wait * (2 ** (retry_attempt - 1))
-            print(f"🌐 Connection issue for {ticker} (Prices). Attempt {retry_attempt}/{max_retries}: {e}. Retrying in {wait}s...")
-            time.sleep(wait)
-            retry_attempt += 1
-    else:
-        raise Exception(f"❌ Max retries exceeded for {ticker} (Prices). Last status: {response.status_code} - {response.text}")
+    # Gemini uses UNIX timestamps in milliseconds
+    start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
+    start_ts = int(time.mktime(start_dt.timetuple())) * 1000
+    end_ts = int(time.mktime(end_dt.timetuple())) * 1000
 
-    # Parse response with Pydantic model
-    price_response = PriceResponse(**response.json())
-    prices = price_response.prices
+    url = f"https://api.gemini.com/v2/candles/{symbol}/1day"
+    params = {"start": start_ts, "end": end_ts}
 
-    if not prices:
+    print(f"🌐 Requesting Gemini candles for {symbol} from {start_date} to {end_date}...")
+    try:
+        response = requests.get(url, params=params, timeout=10)
+    except requests.exceptions.Timeout:
+        raise Exception(f"⏱ Timeout while fetching Gemini price data for {ticker}")
+    except Exception as e:
+        raise Exception(f"❌ Error during Gemini price fetch for {ticker}: {e}")
+
+    print(f"✅ Gemini response received: {response.status_code}")
+
+    if response.status_code != 200:
+        raise Exception(f"Error fetching Gemini price data: {ticker} - {response.status_code} - {response.text}")
+
+    # Gemini returns [timestamp, open, high, low, close, volume]
+    data = response.json()
+    result = []
+    for candle in data:
+        ts, _, _, _, close, _ = candle
+        dt = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+        result.append(Price(
+            time=dt,
+            open=candle[1],
+            high=candle[2],
+            low=candle[3],
+            close=candle[4],
+            volume=int(candle[5])
+        ))
+
+    print(f"📊 Parsed {len(result)} candles from Gemini for {symbol}")
+    return result
+
+def get_financial_metrics(ticker: str) -> list[dict]:
+    """Return crypto-adapted financial metrics for a given CoinGecko asset ID (e.g., 'bitcoin')."""
+    import requests
+
+    symbol = ticker.upper().replace("/USD", "").replace("-USD", "")
+    asset_id = COINGECKO_IDS.get(symbol)
+    if not asset_id:
+        print(f"⚠️ No CoinGecko ID mapping for {ticker}")
         return []
 
-    # Cache the results as dicts
-    _cache.set_prices(ticker, [p.model_dump() for p in prices])
-    return prices
-
-
-def get_financial_metrics(
-    ticker: str,
-    end_date: str,
-    period: str = "ttm",
-    limit: int = 10,
-) -> list[FinancialMetrics]:
-    """Fetch financial metrics from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_financial_metrics(ticker):
-        # Filter cached data by date and limit
-        filtered_data = [FinancialMetrics(**metric) for metric in cached_data if metric["report_period"] <= end_date]
-        filtered_data.sort(key=lambda x: x.report_period, reverse=True)
-        if filtered_data:
-            return filtered_data[:limit]
-
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
-
-    url = f"https://api.financialdatasets.ai/financial-metrics/?ticker={ticker}&report_period_lte={end_date}&limit={limit}&period={period}"
-    max_retries = 10
-    base_wait = 5
-    retry_attempt = 1
-    
-    while retry_attempt <= max_retries:
-        try:
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                break
-            elif response.status_code == 429:
-                retry_after_header = response.headers.get("Retry-After")
-                wait = int(retry_after_header) if retry_after_header else base_wait * (2 ** (retry_attempt - 1))
-                print(f"⚠️ Rate limit hit for {ticker} (Metrics). Retrying in {wait}s... (Attempt {retry_attempt}/{max_retries})")
-                time.sleep(wait)
-                retry_attempt += 1
-            else:
-                raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
-        except requests.exceptions.RequestException as e:
-            wait = base_wait * (2 ** (retry_attempt - 1))
-            print(f"🌐 Connection issue for {ticker} (Metrics). Attempt {retry_attempt}/{max_retries}: {e}. Retrying in {wait}s...")
-            time.sleep(wait)
-            retry_attempt += 1
-    else:
-        raise Exception(f"❌ Max retries exceeded for {ticker} (Metrics). Last status: {response.status_code} - {response.text}")
-
-    # Parse response with Pydantic model
-    metrics_response = FinancialMetricsResponse(**response.json())
-    # Return the FinancialMetrics objects directly instead of converting to dict
-    financial_metrics = metrics_response.financial_metrics
-
-    if not financial_metrics:
+    # ─── CoinGecko ─────────────────────────────────────────────────────────────────
+    cg_url = (
+        f"https://api.coingecko.com/api/v3/coins/{asset_id}"
+        "?localization=false&tickers=true&market_data=true"
+        "&community_data=true&developer_data=true&sparkline=false"
+    )
+    cg = fetch_with_retry(cg_url)
+    if not cg:
         return []
 
-    # Cache the results as dicts
-    _cache.set_financial_metrics(ticker, [m.model_dump() for m in financial_metrics])
-    return financial_metrics
+    # ─── Core metadata ─────────────────────────────────────────────────────────────
+    coin_id             = cg.get("id")
+    coin_symbol         = cg.get("symbol")
+    coin_name           = cg.get("name")
+    web_slug            = cg.get("web_slug")
+    asset_platform_id   = cg.get("asset_platform_id")
+    platforms           = cg.get("platforms")
+    detail_platforms    = cg.get("detail_platforms")
+    hashing_algorithm   = cg.get("hashing_algorithm")
+    block_time_minutes  = cg.get("block_time_in_minutes")
+    categories          = cg.get("categories")
+    country_origin      = cg.get("country_origin")
+    genesis_date        = cg.get("genesis_date")
 
+    # ─── Listing & notices ─────────────────────────────────────────────────────────
+    preview_listing      = cg.get("preview_listing")
+    public_notice        = cg.get("public_notice")
+    additional_notices   = cg.get("additional_notices")
+    localization_map     = cg.get("localization")
+
+    # ─── Descriptions & links ──────────────────────────────────────────────────────
+    description = cg.get("description", {})  # dict with "en", "de", etc.
+    description_en       = description.get("en")
+    description_de       = description.get("de")
+
+    links               = cg.get("links", {}) or {}
+    twitter_handle      = links.get("twitter_screen_name")
+    homepage_urls       = links.get("homepage")
+    whitepaper_url      = links.get("whitepaper")
+    blockchain_sites    = links.get("blockchain_site")
+    official_forum_urls = links.get("official_forum_url")
+    chat_urls           = links.get("chat_url")
+    announcement_urls   = links.get("announcement_url")
+    snapshot_url        = links.get("snapshot_url")
+    subreddit_url       = links.get("subreddit_url")
+
+    repos_url           = links.get("repos_url", {}) or {}
+    repos_url_github    = repos_url.get("github")
+    repos_url_bitbucket = repos_url.get("bitbucket")
+
+    status_updates      = cg.get("status_updates")
+    watchlist_users     = cg.get("watchlist_portfolio_users")
+    market_cap_rank     = cg.get("market_cap_rank")
+    sentiment_up_pct    = cg.get("sentiment_votes_up_percentage")
+    sentiment_down_pct  = cg.get("sentiment_votes_down_percentage")
+    tickers_count       = len(cg.get("tickers", []))
+    last_updated_global = cg.get("last_updated")
+
+    # ─── Market data ─────────────────────────────────────────────────────────────
+    md = cg.get("market_data", {}) or {}
+    market_cap    = md.get("market_cap", {}).get("usd")
+    current_price = md.get("current_price", {}).get("usd")
+    volume_24h    = md.get("total_volume", {}).get("usd")
+    circulating   = md.get("circulating_supply")
+    total_supply  = md.get("total_supply")
+    max_supply    = md.get("max_supply")
+    fdv           = md.get("fully_diluted_valuation", {}).get("usd")
+
+    # ─── Price change percentages ─────────────────────────────────────────────────
+    pct_24h  = md.get("price_change_percentage_24h")
+    pct_7d   = md.get("price_change_percentage_7d")
+    pct_14d  = md.get("price_change_percentage_14d")
+    pct_30d  = md.get("price_change_percentage_30d")
+    pct_60d  = md.get("price_change_percentage_60d")
+    pct_200d = md.get("price_change_percentage_200d")
+    pct_1y   = md.get("price_change_percentage_1y")
+
+    # ─── ATH / ATL ────────────────────────────────────────────────────────────────
+    ath      = md.get("ath", {}).get("usd")
+    ath_date = md.get("ath_date", {}).get("usd")
+    atl      = md.get("atl", {}).get("usd")
+    atl_date = md.get("atl_date", {}).get("usd")
+
+    # ─── Advanced scores ──────────────────────────────────────────────────────────
+    coingecko_score       = cg.get("coingecko_score")
+    liquidity_score       = cg.get("liquidity_score")
+    public_interest_score = cg.get("public_interest_score")
+
+    # ─── Public interest stats ────────────────────────────────────────────────────
+    pis            = cg.get("public_interest_stats", {}) or {}
+    alexa_rank     = pis.get("alexa_rank")
+    bing_matches   = pis.get("bing_matches")
+
+    # ─── ROI ───────────────────────────────────────────────────────────────────────
+    roi          = cg.get("roi", {}) or {}
+    roi_times    = roi.get("times")
+    roi_currency = roi.get("currency")
+    roi_pct      = roi.get("percentage")
+
+    # ─── Developer data ───────────────────────────────────────────────────────────
+    dev_data            = cg.get("developer_data", {}) or {}
+    dev_forks           = dev_data.get("forks")
+    dev_stars           = dev_data.get("stars")
+    dev_subscribers     = dev_data.get("subscribers")
+    dev_total_issues    = dev_data.get("total_issues")
+    dev_closed_issues   = dev_data.get("closed_issues")
+    dev_pr_merged       = dev_data.get("pull_requests_merged")
+    pr_contributors     = dev_data.get("pull_request_contributors")
+    code_changes_4w     = dev_data.get("code_additions_deletions_4_weeks", {}) or {}
+    additions_4w        = code_changes_4w.get("additions")
+    deletions_4w        = code_changes_4w.get("deletions")
+    activity_series_4w  = dev_data.get("last_4_weeks_commit_activity_series", [])
+
+    # ─── Community data ───────────────────────────────────────────────────────────
+    comm_data                 = cg.get("community_data", {}) or {}
+    facebook_likes            = comm_data.get("facebook_likes")
+    twitter_followers         = comm_data.get("twitter_followers")
+    reddit_subscribers        = comm_data.get("reddit_subscribers")
+    reddit_posts_48h          = comm_data.get("reddit_average_posts_48h")
+    reddit_comments_48h       = comm_data.get("reddit_average_comments_48h")
+    reddit_accounts_active_48h= comm_data.get("reddit_accounts_active_48h")
+    telegram_channel_user_count = comm_data.get("telegram_channel_user_count")
+
+    # ─── Primary ticker & conversions ─────────────────────────────────────────────
+    primary_ticker               = (cg.get("tickers") or [{}])[0] or {}
+    primary_last                 = primary_ticker.get("last")
+    primary_volume               = primary_ticker.get("volume")
+    primary_trust_score          = primary_ticker.get("trust_score")
+    primary_spread_pct           = primary_ticker.get("bid_ask_spread_percentage")
+
+    converted_last   = primary_ticker.get("converted_last", {}) or {}
+    converted_volume = primary_ticker.get("converted_volume", {}) or {}
+    conv_last_usd    = converted_last.get("usd")
+    conv_last_btc    = converted_last.get("btc")
+    conv_last_eth    = converted_last.get("eth")
+    conv_vol_usd     = converted_volume.get("usd")
+    conv_vol_btc     = converted_volume.get("btc")
+    conv_vol_eth     = converted_volume.get("eth")
+
+    # ─── Gemini pubticker ───────────────────────────────────────────────────────────
+    gem_symbol = f"{symbol.lower()}usd"
+    gem = requests.get(f"https://api.gemini.com/v1/pubticker/{gem_symbol}").json()
+    bid    = float(gem.get("bid", 0))
+    ask    = float(gem.get("ask", 0))
+    last   = float(gem.get("last", 0))
+    mid    = float(gem.get("mid", (bid + ask) / 2))
+    spread = ask - bid
+
+    # ─── Gemini order book & trades ────────────────────────────────────────────────
+    book         = requests.get(
+        f"https://api.gemini.com/v1/book/{gem_symbol}?limit_bids=25&limit_asks=25"
+    ).json()
+    top_bids     = book["bids"][:5]
+    top_asks     = book["asks"][:5]
+    trades       = requests.get(
+        f"https://api.gemini.com/v1/trades/{gem_symbol}?limit_trades=500"
+    ).json()
+    trade_count  = len(trades)
+    avg_trade_size = (
+        sum(float(t["amount"]) for t in trades) / trade_count
+        if trade_count else None
+    )
+
+    # ─── Gemini 1-day latest candle via v2 ─────────────────────────────────────────
+    v2_url      = f"https://api.gemini.com/v2/candles/{gem_symbol}/1day"
+    daily_open = daily_high = daily_low = daily_close = daily_volume = None
+    try:
+        resp = requests.get(v2_url)
+        resp.raise_for_status()
+        data = resp.json()
+        if data and isinstance(data, list):
+            _, daily_open, daily_high, daily_low, daily_close, daily_volume = max(data, key=lambda c: c[0])
+    except Exception as e:
+        print(f"⚠️ Failed to fetch Gemini v2 candle for {gem_symbol}: {e}")
+
+    return [{
+        "ticker":                    ticker.upper(),
+        "report_period":             "latest",
+        "period":                    "ttm",
+        "currency":                  "USD",
+
+        # CoinGecko metadata
+        "coin_id":                   coin_id,
+        "symbol":                    coin_symbol,
+        "name":                      coin_name,
+
+
+        "platforms":                 platforms,
+        "detail_platforms":          detail_platforms,
+        "hashing_algorithm":         hashing_algorithm,
+        "block_time_minutes":        block_time_minutes,
+        "categories":                categories,
+        "country_origin":            country_origin,
+        "genesis_date":              genesis_date,
+        "preview_listing":           preview_listing,
+        "public_notice":             public_notice,
+        "additional_notices":        additional_notices,
+        "localization":              localization_map,
+        "status_updates":            status_updates,
+        "watchlist_portfolio_users": watchlist_users,
+        "market_cap_rank":           market_cap_rank,
+        "sentiment_votes_up_pct":    sentiment_up_pct,
+        "sentiment_votes_down_pct":  sentiment_down_pct,
+        "tickers_count":             tickers_count,
+        "last_updated_global":       last_updated_global,
+
+        # Market data
+        "market_cap":                market_cap,
+        "fully_diluted_valuation":   fdv or market_cap,
+        "current_price":             current_price,
+        "volume_24h":                volume_24h,
+        "circulating_supply":        circulating,
+        "total_supply":              total_supply,
+        "max_supply":                max_supply,
+
+        # Price change %
+        "price_change_pct_24h":      pct_24h,
+        "price_change_pct_7d":       pct_7d,
+        "price_change_pct_14d":      pct_14d,
+        "price_change_pct_30d":      pct_30d,
+        "price_change_pct_60d":      pct_60d,
+        "price_change_pct_200d":     pct_200d,
+        "price_change_pct_1y":       pct_1y,
+
+        # ATH/ATL
+        "ath":                       ath,
+        "ath_date":                  ath_date,
+        "atl":                       atl,
+        "atl_date":                  atl_date,
+
+        # Advanced scores
+        "coingecko_score":           coingecko_score,
+        "liquidity_score":           liquidity_score,
+        "public_interest_score":     public_interest_score,
+
+        # Public interest stats
+        "alexa_rank":                alexa_rank,
+        "bing_matches":              bing_matches,
+
+        # ROI
+        "roi_times":                 roi_times,
+        "roi_currency":              roi_currency,
+        "roi_percentage":            roi_pct,
+
+        # Developer data
+        "developer_forks":           dev_forks,
+        "developer_stars":           dev_stars,
+        "developer_subscribers":     dev_subscribers,
+        "developer_total_issues":    dev_total_issues,
+        "developer_closed_issues":   dev_closed_issues,
+        "developer_pr_merged":       dev_pr_merged,
+        "pr_contributors":           pr_contributors,
+        "code_additions_4_weeks":    additions_4w,
+        "code_deletions_4_weeks":    deletions_4w,
+        "activity_series_4_weeks":   activity_series_4w,
+
+        # Community data
+        "facebook_likes":            facebook_likes,
+        "twitter_followers":         twitter_followers,
+        "reddit_subscribers":        reddit_subscribers,
+        "reddit_posts_48h":          reddit_posts_48h,
+        "reddit_comments_48h":       reddit_comments_48h,
+        "reddit_accounts_active_48h": reddit_accounts_active_48h,
+        "telegram_channel_user_count": telegram_channel_user_count,
+
+        # Primary ticker & conversions
+        "primary_last":              primary_last,
+        "primary_volume":            primary_volume,
+        "primary_trust_score":       primary_trust_score,
+        "primary_bid_ask_spread_pct": primary_spread_pct,
+        "converted_last_usd":        conv_last_usd,
+        "converted_last_btc":        conv_last_btc,
+        "converted_last_eth":        conv_last_eth,
+        "converted_volume_usd":      conv_vol_usd,
+        "converted_volume_btc":      conv_vol_btc,
+        "converted_volume_eth":      conv_vol_eth,
+
+        # Gemini pubticker
+        "gemini_bid":                bid,
+        "gemini_ask":                ask,
+        "gemini_last":               last,
+        "gemini_mid_price":          mid,
+        "gemini_spread":             spread,
+
+        # Gemini book & trades
+        "gemini_top_bids":           top_bids,
+        "gemini_top_asks":           top_asks,
+        "gemini_trade_count":        trade_count,
+        "gemini_avg_trade_size":     avg_trade_size,
+
+        # Gemini daily candle (v2)
+        "gemini_daily_open":         daily_open,
+        "gemini_daily_high":         daily_high,
+        "gemini_daily_low":          daily_low,
+        "gemini_daily_close":        daily_close,
+        "gemini_daily_volume":       daily_volume,
+
+        # Derived ratios
+        "price_to_sales_ratio":            market_cap / volume_24h if market_cap and volume_24h else None,
+        "enterprise_value_to_revenue_ratio": ((fdv or market_cap) / volume_24h) if volume_24h else None,
+        "volume_to_market_cap":            volume_24h / market_cap if market_cap and volume_24h else None,
+
+        # Placeholders for non-applicable metrics
+        "price_to_earnings_ratio":          "not applicable to crypto",
+        "price_to_book_ratio":              "not applicable to crypto",
+        "enterprise_value_to_ebitda_ratio": "not applicable to crypto",
+        "free_cash_flow_yield":             "not applicable to crypto",
+        "peg_ratio":                        "not applicable to crypto",
+        "gross_margin":                     "not applicable to crypto",
+        "operating_margin":                 "not applicable to crypto",
+        "net_margin":                       "not applicable to crypto",
+        "return_on_equity":                 "not applicable to crypto",
+        "return_on_assets":                 "not applicable to crypto",
+    }]
 
 def search_line_items(
     ticker: str,
@@ -139,242 +440,274 @@ def search_line_items(
     period: str = "ttm",
     limit: int = 10,
 ) -> list[LineItem]:
-    """Fetch line items from API."""
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
+    """Fetch Gemini market data and dynamically map requested line_items."""
+    try:
+        # Normalize Gemini symbol format (e.g. BTC-USD → btcusd)
+        gemini_symbol = ticker.lower().replace("-", "")
 
-    url = "https://api.financialdatasets.ai/financials/search/line-items"
+        # Fetch ticker data (price, volume)
+        gemini_symbol = ticker.lower().replace("/", "").replace("-", "")
+        ticker_url = f"https://api.gemini.com/v1/pubticker/{gemini_symbol}"
 
-    body = {
-        "tickers": [ticker],
-        "line_items": line_items,
-        "end_date": end_date,
-        "period": period,
-        "limit": limit,
-    }
-
-
-    max_retries = 10
-    base_delay = 5  # seconds
-
-    retry_attempt = 1
-    while retry_attempt <= max_retries:
+        print(f"🌐 Fetching Gemini pubticker from {ticker_url}...")
         try:
-            response = requests.post(url, headers=headers, json=body, timeout=10)
-            if response.status_code == 200:
-                break
-            elif response.status_code == 429:
-                retry_after_header = response.headers.get("Retry-After")
-                wait = int(retry_after_header) if retry_after_header else base_delay * (2 ** (retry_attempt - 1))
-                print(f"⚠️ Rate limit hit for {ticker} (Line Items). Retrying in {wait}s... (Attempt {retry_attempt}/{max_retries})")
-                time.sleep(wait)
-                retry_attempt += 1
-            else:
-                raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
+            ticker_resp = requests.get(ticker_url, timeout=10)
         except requests.exceptions.RequestException as e:
-            wait = base_delay * (2 ** (retry_attempt - 1))
-            print(f"🌐 Connection issue for {ticker} (Line Items). Attempt {retry_attempt}/{max_retries}: {e}. Retrying in {wait}s...")
-            time.sleep(wait)
-            retry_attempt += 1
-    else:
-        raise Exception(f"❌ Max retries exceeded for {ticker} (Line Items). Last status: {response.status_code} - {response.text}")
-    data = response.json()
-    response_model = LineItemResponse(**data)
-    search_results = response_model.search_results
-    if not search_results:
+            print(f"❌ Request error for {gemini_symbol}: {e}")
+            return []
+
+        ticker_data = ticker_resp.json()
+        last_price = float(ticker_data.get("last", 0))
+        usd_volume = float(ticker_data.get("volume", {}).get("USD", 0))
+        base_volume = float(ticker_data.get("volume", {}).get("BTC", 0))  # fallback to asset volume
+
+        # Fetch symbol metadata
+        details_url = f"https://api.gemini.com/v1/symbols/details/{gemini_symbol}"
+        details_resp = requests.get(details_url)
+        details = details_resp.json() if details_resp.status_code == 200 else {}
+
+        # Create a dict to hold mapped results
+        mapped = {
+            "ticker": ticker.upper(),
+            "report_period": end_date,
+            "period": period,
+            "currency": "USD"
+        }
+
+        for item in line_items:
+            key = item.lower()
+
+            if key == "revenue":
+                mapped["revenue"] = usd_volume
+            elif key == "gross_profit":
+                mapped["gross_profit"] = usd_volume * 0.002  # mock 0.2% profit margin
+            elif key == "price":
+                mapped["price"] = last_price
+            elif key == "volume":
+                mapped["volume"] = base_volume
+            elif key == "tick_size":
+                mapped["tick_size"] = float(details.get("tick_size", 0))
+            elif key == "min_order_size":
+                mapped["min_order_size"] = float(details.get("min_order_size", 0))
+            elif key == "quote_increment":
+                mapped["quote_increment"] = float(details.get("quote_increment", 0))
+            else:
+                print(f"⚠️ Unsupported line item: {key}")
+
+        return [LineItem(**mapped)]
+
+    except Exception as e:
+        print(f"❌ Gemini fetch failed for {ticker}: {e}")
         return []
 
-    # Cache the results
-    return search_results[:limit]
 
+def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[InsiderTrade]:
+    """Use Blockchair BTC transaction data to simulate whale trades (free)."""
+    import datetime
+    import time
+    import requests
 
-def get_insider_trades(
-    ticker: str,
-    end_date: str,
-    start_date: str | None = None,
-    limit: int = 1000,
-) -> list[InsiderTrade]:
-    """Fetch insider trades from cache or API."""
-    # Check cache first
-    if cached_data := _cache.get_insider_trades(ticker):
-        # Filter cached data by date range
-        filtered_data = [InsiderTrade(**trade) for trade in cached_data 
-                        if (start_date is None or (trade.get("transaction_date") or trade["filing_date"]) >= start_date)
-                        and (trade.get("transaction_date") or trade["filing_date"]) <= end_date]
-        filtered_data.sort(key=lambda x: x.transaction_date or x.filing_date, reverse=True)
-        if filtered_data:
-            return filtered_data
+    if ticker.upper() != "BTC/USD":
+        print(f"⚠️ Blockchair free API only supports BTC for this function. Skipping {ticker}")
+        return []
 
-    # If not in cache or insufficient data, fetch from API
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
-
-    all_trades = []
-    current_end_date = end_date
-    
-    while True:
-        url = f"https://api.financialdatasets.ai/insider-trades/?ticker={ticker}&filing_date_lte={current_end_date}"
-        if start_date:
-            url += f"&filing_date_gte={start_date}"
-        url += f"&limit={limit}"
-        
-        max_retries = 10
-        base_wait = 5
-        retry_attempt = 1
-        
-        while retry_attempt <= max_retries:
+    def get_with_backoff(url, params=None, headers=None, max_retries=2, timeout=10):
+        delay = 2
+        for attempt in range(1, max_retries + 1):
             try:
-                response = requests.get(url, headers=headers)
+                response = requests.get(url, params=params, headers=headers, timeout=timeout)
                 if response.status_code == 200:
-                    break
-                elif response.status_code == 429:
-                    retry_after_header = response.headers.get("Retry-After")
-                    wait = int(retry_after_header) if retry_after_header else base_wait * (2 ** (retry_attempt - 1))
-                    print(f"⚠️ Rate limit hit for {ticker} (Insider Trades). Retrying in {wait}s... (Attempt {retry_attempt}/{max_retries})")
-                    time.sleep(wait)
-                    retry_attempt += 1
+                    return response
+                elif response.status_code == 430 or "blacklisted" in response.text.lower():
+                    print(f"⚠️ Blocked or throttled (attempt {attempt}) – waiting {delay}s before retry...")
+                    time.sleep(delay)
+                    delay *= 2
                 else:
-                    raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
-            except requests.exceptions.RequestException as e:
-                wait = base_wait * (2 ** (retry_attempt - 1))
-                print(f"🌐 Connection issue for {ticker} (Insider Trades). Attempt {retry_attempt}/{max_retries}: {e}. Retrying in {wait}s...")
-                time.sleep(wait)
-                retry_attempt += 1
-        else:
-            raise Exception(f"❌ Max retries exceeded for {ticker} (Insider Trades). Last status: {response.status_code} - {response.text}")
-        
-        data = response.json()
-        response_model = InsiderTradeResponse(**data)
-        insider_trades = response_model.insider_trades
-        
-        if not insider_trades:
-            break
-            
-        all_trades.extend(insider_trades)
-        
-        # Only continue pagination if we have a start_date and got a full page
-        if not start_date or len(insider_trades) < limit:
-            break
-            
-        # Update end_date to the oldest filing date from current batch for next iteration
-        current_end_date = min(trade.filing_date for trade in insider_trades).split('T')[0]
-        
-        # If we've reached or passed the start_date, we can stop
-        if current_end_date <= start_date:
-            break
+                    print(f"❌ HTTP {response.status_code}: {response.text}")
+                    return response
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                print(f"⏳ Timeout or connection error on attempt {attempt} – waiting {delay}s: {e}")
+                time.sleep(delay)
+                delay *= 2
+            except Exception as e:
+                print(f"❌ Unexpected error: {e}")
+                return None
+        print("🛑 Max retries exceeded.")
+        return None
 
-    if not all_trades:
+    url = f"https://api.blockchair.com/bitcoin/transactions?limit={limit}"
+    response = get_with_backoff(url)
+    if not response or response.status_code != 200:
+        print("❌ Failed to fetch Blockchair data.")
         return []
 
-    # Cache the results
-    _cache.set_insider_trades(ticker, [trade.model_dump() for trade in all_trades])
-    return all_trades
+    txs = response.json().get("data", [])
+    if not txs:
+        print("ℹ️ No transaction data received.")
+        return []
 
+    trades = []
+    largest = sorted(txs, key=lambda tx: tx.get("input_total_usd", 0), reverse=True)[:5]
+    print("🔍 Largest transactions:")
+    for tx in largest:
+        print(f" - ${tx['input_total_usd']:.2f} on {tx['date']} (BTC: {tx['input_total'] / 1e8:.4f})")
+
+    for tx in txs:
+        usd = tx.get("input_total_usd", 0)
+        btc = tx.get("input_total", 0) / 1e8
+        if usd >= 1_000_000:
+            trades.append(InsiderTrade(
+                insider_name="Unknown Wallet",
+                role="Whale",
+                ticker="BTC/USD",
+                transaction_type="Large Transfer",
+                shares=btc,
+                price=usd / btc if btc else 0,
+                transaction_date=tx["date"],
+                filing_date=tx["date"]
+            ))
+
+    if not trades:
+        print("ℹ️ No large BTC transfers found.")
+    return trades
+
+def classify_sentiment(text: str) -> str:
+    """Use OpenAI Chat API to classify sentiment as 'positive', 'neutral', or 'negative'."""
+    from config2 import OPENAI_API_KEY
+    from openai import OpenAI
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+    prompt = (
+        "Classify the sentiment of the following news text as strictly one of: "
+        "'positive', 'neutral', or 'negative'.\n\n"
+        f"Text:\n{text.strip()}"
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o",  # or "gpt-3.5-turbo"
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+
+    sentiment = response.choices[0].message.content.strip().lower()
+    return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
 
 def get_company_news(
     ticker: str,
     end_date: str,
     start_date: str | None = None,
-    limit: int = 1000,
+    limit: int = 10,
 ) -> list[CompanyNews]:
-    """Fetch company news from cache or API."""
+    """Fetch company news using Alpaca API."""
+    from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
+
+    # Normalize ticker (e.g. BTC/USD → BTCUSD)
+    symbol = ticker.replace("/", "").replace("-", "").upper()
+
     # Check cache first
-    if cached_data := _cache.get_company_news(ticker):
-        # Filter cached data by date range
-        filtered_data = [CompanyNews(**news) for news in cached_data 
-                         if (start_date is None or news["date"] >= start_date)
-                         and news["date"] <= end_date]
+    if cached_data := _cache.get_company_news(symbol):
+        filtered_data = [
+            CompanyNews(**news)
+            for news in cached_data
+            if (start_date is None or news["date"] >= start_date)
+            and news["date"] <= end_date
+        ]
         filtered_data.sort(key=lambda x: x.date, reverse=True)
         if filtered_data:
-            print(f"📦 Loaded cached news for {ticker}: {len(filtered_data)} articles")
+            print(f"📦 Loaded cached news for {symbol}: {len(filtered_data)} articles")
             return filtered_data
 
-    headers = {}
-    if api_key := os.environ.get("FINANCIAL_DATASETS_API_KEY"):
-        headers["X-API-KEY"] = api_key
-
     all_news = []
-    current_end_date = end_date
 
-    max_retries = 10
-    base_wait = 5  # seconds
-    retry_attempt = 1
+    headers = {
+        "accept": "application/json",
+        "APCA-API-KEY-ID": APCA_API_KEY_ID,
+        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY,
+    }
 
-    while True:
-        url = f"https://api.financialdatasets.ai/news/?ticker={ticker}&end_date={current_end_date}"
-        if start_date:
-            url += f"&start_date={start_date}"
-        url += f"&limit={limit}"
+    base_url = "https://data.alpaca.markets/v1beta1/news"
+    params = {
+        "symbols": symbol,
+        "limit": limit,
+        "sort": "desc",
+        "include_content": "true",
+        "exclude_contentless": "true",
+    }
 
-        print(f"🔁 Fetching news page for {ticker} ending at {current_end_date}")
+    if start_date and end_date:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=1)
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        params["start"] = start_dt.strftime("%Y-%m-%d")
+        params["end"] = end_dt.strftime("%Y-%m-%d")
 
-        while retry_attempt <= max_retries:
-            try:
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200:
-                    break
-                elif response.status_code == 429:
-                    retry_after_header = response.headers.get("Retry-After")
-                    wait = int(retry_after_header) if retry_after_header else base_wait * (2 ** (retry_attempt - 1))
-                    print(f"⚠️ Rate limit hit for {ticker} (News). Retrying in {wait}s... (Attempt {retry_attempt}/{max_retries})")
-                    time.sleep(wait)
-                    retry_attempt += 1
-                else:
-                    raise Exception(f"Error fetching data: {ticker} - {response.status_code} - {response.text}")
-            except requests.exceptions.RequestException as e:
-                wait = base_wait * (2 ** (retry_attempt - 1))
-                print(f"🌐 Connection issue for {ticker} (Attempt {retry_attempt}/{max_retries}): {e}. Retrying in {wait}s...")
-                time.sleep(wait)
-                retry_attempt += 1
-        else:
-            raise Exception(f"❌ Max retries exceeded for {ticker} (News). Last status: {response.status_code} - {response.text}")
+    print(f"🔍 Final request URL: {base_url}")
+    print(f"🔍 Params: {params}")
 
-        data = response.json()
-        response_model = CompanyNewsResponse(**data)
-        company_news = response_model.news
+    print(f"📡 Requesting Alpaca news for {symbol}...")
+    response = requests.get(base_url, headers=headers, params=params)
+    if response.status_code != 200:
+        raise Exception(f"Error fetching Alpaca news: {response.status_code} - {response.text}")
 
-        print(f"📄 Retrieved {len(company_news)} news items for {ticker} in this page")
+    data = response.json()
+    print(f"📥 Raw response data: {json.dumps(data, indent=2)[:500]}")
+    articles = data.get("news", [])
+    print(f"📄 Retrieved {len(articles)} news articles from Alpaca")
 
-        if not company_news:
-            break
+    # Step 1: Convert to CompanyNews objects first (without sentiment)
+    news_items = []
+    for a in articles:
+        news_items.append(CompanyNews(
+            ticker=symbol,
+            title=a.get("headline"),
+            author=a.get("source"),
+            source=a.get("source"),
+            date=a.get("created_at")[:10],
+            url=a.get("url"),
+            sentiment=None
+        ))
 
-        all_news.extend(company_news)
+    # Step 2: Assign sentiment dynamically
+    for item in news_items:
+        item.sentiment = classify_sentiment(f"{item.title}")
 
-        if not start_date or len(company_news) < limit:
-            break
-
-        new_end_date = min(news.date for news in company_news).split('T')[0]
-        if new_end_date == current_end_date:
-            print(f"🔁 Pagination stalled for {ticker} at {current_end_date} — stopping to prevent infinite loop.")
-            break
-        current_end_date = new_end_date
-        if current_end_date <= start_date:
-            break
+    all_news = news_items
 
     if not all_news:
-        print(f"⚠️ No news found for {ticker}. Exiting.")
+        print(f"⚠️ No news found for {symbol}.")
     else:
-        print(f"✅ Done fetching news for {ticker} — {len(all_news)} articles total")
+        print(f"✅ Done fetching Alpaca news for {symbol} — {len(all_news)} articles")
 
-    _cache.set_company_news(ticker, [news.model_dump() for news in all_news])
+    _cache.set_company_news(symbol, [n.model_dump() for n in all_news])
     return all_news
 
 
 
-def get_market_cap(
-    ticker: str,
-    end_date: str,
-) -> float | None:
-    """Fetch market cap from the API."""
-    financial_metrics = get_financial_metrics(ticker, end_date)
-    market_cap = financial_metrics[0].market_cap
-    if not market_cap:
+def get_market_cap(ticker: str, end_date: str) -> float | None:
+    """Fetch market cap using CoinGecko public API."""
+    import requests
+
+    base = ticker.upper().replace("/USD", "").replace("-USD", "")
+    coingecko_id = COINGECKO_IDS.get(base)
+
+    if not coingecko_id:
+        print(f"⚠️ No CoinGecko ID mapping for {ticker}")
         return None
 
-    return market_cap
+    url = f"https://api.coingecko.com/api/v3/coins/{coingecko_id}"
+
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            print(f"⚠️ CoinGecko error for {ticker}: {response.status_code} - {response.text}")
+            return None
+
+        data = response.json()
+        market_cap = data.get("market_data", {}).get("market_cap", {}).get("usd")
+        return float(market_cap) if market_cap else None
+    except Exception as e:
+        print(f"⚠️ Exception fetching CoinGecko market cap for {ticker}: {e}")
+        return None
 
 
 def prices_to_df(prices: list[Price]) -> pd.DataFrame:
@@ -393,3 +726,34 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
 def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     prices = get_prices(ticker, start_date, end_date)
     return prices_to_df(prices)
+
+# --- TEST BLOCK (comment out after use) ---
+
+ticker = "BTC/USD"
+start_date = "2025-06-12"
+end_date = "2025-06-12"
+
+MAX_ITEMS = 3  # limit how many results to show
+
+print("\n=== get_prices ===")
+prices = get_prices(ticker, start_date, end_date)
+print([p.model_dump() for p in prices[:MAX_ITEMS]])
+
+print("\n=== get_financial_metrics ===")
+metrics = get_financial_metrics(ticker)
+print(metrics[:MAX_ITEMS])
+
+print("\n=== search_line_items ===")
+line_items = search_line_items(ticker, ["revenue", "gross_profit"], end_date)
+print([li.model_dump() for li in line_items[:MAX_ITEMS]])
+
+print("\n=== get_insider_trades ===")
+trades = get_insider_trades(ticker, end_date, start_date)
+print([t.model_dump() for t in trades[:MAX_ITEMS]])
+
+print("\n=== get_company_news ===")
+news = get_company_news(ticker, end_date, start_date)
+print([n.model_dump() for n in news[:MAX_ITEMS]])
+
+print("\n=== get_market_cap ===")
+print(get_market_cap(ticker, end_date))

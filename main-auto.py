@@ -15,101 +15,101 @@ from dateutil.relativedelta import relativedelta
 import json
 import os
 import sys
+import base64
+import time
+import hashlib
 import requests
+import hmac
+
 sys.path.append("/root/stock2")
 # Force debug to confirm what was loaded
-from config import APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL
 
-print("🧪 Loaded from config.py:")
-print("APCA_API_KEY_ID =", APCA_API_KEY_ID)
-print("APCA_API_SECRET_KEY =", APCA_API_SECRET_KEY)
-print("APCA_API_BASE_URL =", APCA_API_BASE_URL)
+from config2 import GEM_API_KEY, GEM_API_SECRET  # Use your Gemini keys
+
 
 init(autoreset=True)
 TESTING_MODE = False  # Set to False in production
 
-
-def fetch_alpaca_positions():
-    import requests
+def get_gemini_portfolio():
+    url = "https://api.gemini.com/v1/notionalbalances/usd"
+    payload = {
+        "request": "/v1/notionalbalances/usd",
+        "nonce": int(time.time() * 1000)
+    }
+    encoded_payload = base64.b64encode(json.dumps(payload).encode()).decode()
+    signature = hmac.new(GEM_API_SECRET.encode(), encoded_payload.encode(), hashlib.sha384).hexdigest()
 
     headers = {
-        "accept": "application/json",
-        "APCA-API-KEY-ID": APCA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY
+        "X-GEMINI-APIKEY": GEM_API_KEY,
+        "X-GEMINI-PAYLOAD": encoded_payload,
+        "X-GEMINI-SIGNATURE": signature,
+        "Content-Type": "application/json"
     }
 
-    url = f"{APCA_API_BASE_URL}/v2/positions"
-    print("📡 Fetching Alpaca positions...")
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
-
-    positions = {}
-    for pos in data:
-        symbol = pos["symbol"]
-        qty = float(pos["qty"])
-        cost_basis = float(pos["avg_entry_price"])
-        side = pos["side"]
-
-        positions[symbol] = {
-            "long": qty if side == "long" else 0,
-            "short": abs(qty) if side == "short" else 0,
-            "long_cost_basis": cost_basis if side == "long" else 0.0,
-            "short_cost_basis": cost_basis if side == "short" else 0.0,
-            "short_margin_used": abs(float(pos["market_value"])) if side == "short" else 0.0,
-        }
-
-    return positions
-
-def fetch_alpaca_equity():
-    import requests
-    api_key = APCA_API_KEY_ID
-    api_secret_key = APCA_API_SECRET_KEY
-    base_url = APCA_API_BASE_URL
-
-    print("\n🔍 Attempting to fetch Alpaca equity")
-    print(f"🔑 API Key: {api_key}")
-    print(f"🔑 Secret Key: {api_secret_key}")
-    print(f"🌐 Base URL: {base_url}")
-
-    if not api_key or not api_secret_key:
-        print(f"{Fore.RED}❌ Missing Alpaca API credentials. Check your config.py file.{Style.RESET_ALL}")
-        sys.exit(1)
-
-    headers = {
-        "accept": "application/json",
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret_key
-    }
+    print("🔐 Gemini API Key:", GEM_API_KEY[:6] + "..." + GEM_API_KEY[-4:])
+    print("🌐 Endpoint:        ", url)
+    print("📤 Payload:")
+    print(json.dumps(payload, indent=2))
+    print("📤 Headers:")
+    print(json.dumps(headers, indent=2))
 
     try:
-        print("📡 Sending request to Alpaca...")
-        resp = requests.get(f"{base_url}/v2/account", headers=headers)
-        print(f"🔁 Response Status: {resp.status_code}")
-        print(f"📝 Response Body: {resp.text}")
+        response = requests.post(url, headers=headers)
+        print(f"📥 Raw Response Code: {response.status_code}")
+        print("📥 Raw Response Body:")
+        print(response.text)
+        response.raise_for_status()
 
-        resp.raise_for_status()
-        alpaca_equity = float(resp.json()["equity"])
-        print(f"{Fore.YELLOW}📊 Using Alpaca account equity: ${alpaca_equity:,.2f}{Style.RESET_ALL}")
-        json_data = resp.json()
+        data = response.json()
+        total_value = sum(float(balance["amountNotional"]) for balance in data if "amountNotional" in balance)
         return {
-            "equity": float(json_data["equity"]),
-            "cash": float(json_data.get("cash", 0.0)),  # ✅ Add this line
-            "margin_requirement": float(json_data.get("maintenance_margin", 0.0)),
-            "margin_used": float(json_data.get("margin_used", 0.0)),
-            "buying_power": float(json_data.get("buying_power", 0.0)),
-            "portfolio_value": float(json_data.get("portfolio_value", 0.0)),
-            "initial_margin": float(json_data.get("initial_margin", 0.0)),
+            "total_balance": total_value,
+            "assets": [
+                {
+                    "asset": balance["currency"],
+                    "total_balance_fiat": float(balance["amountNotional"]),
+                    "total_balance_crypto": float(balance["available"])
+                }
+                for balance in data if "amountNotional" in balance
+            ]
         }
 
-    except requests.exceptions.HTTPError as http_err:
-        print(f"{Fore.RED}❌ HTTP error occurred: {http_err}{Style.RESET_ALL}")
-    except requests.exceptions.RequestException as req_err:
-        print(f"{Fore.RED}❌ Request exception: {req_err}{Style.RESET_ALL}")
     except Exception as e:
-        print(f"{Fore.RED}⚠️ Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"❌ ERROR fetching Gemini portfolio: {e}")
+        return {
+            "total_balance": 0.0,
+            "assets": []
+        }
 
-    sys.exit(1)
+def fetch_gemini_balances():
+    portfolio = get_gemini_portfolio()
+    assets = portfolio.get("assets", [])
+    return {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in assets
+        if asset["total_balance_crypto"] > 0
+    }
+
+def fetch_gemini_equity():
+    portfolio = get_gemini_portfolio()
+    assets = portfolio.get("assets", [])
+    total_value = sum(float(balance["total_balance_fiat"]) for balance in assets)
+
+    return {
+        "equity": total_value,
+        "cash": next((float(b["total_balance_fiat"]) for b in assets if b["asset"] == "USD"), 0.0),
+        "buying_power": total_value,
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": total_value,
+        "initial_margin": 0.0,
+    }
 
 def parse_hedge_fund_response(response):
     """Parses a JSON string and returns a dictionary."""
@@ -182,17 +182,12 @@ def run_hedge_fund(
         # Stop progress tracking
         progress.stop()
 
-def get_alpaca_price(symbol):
-    url = f"https://data.alpaca.markets/v2/stocks/{symbol}/trades/latest"
-    headers = {
-        "accept": "application/json",
-        "APCA-API-KEY-ID": APCA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY
-    }
-    resp = requests.get(url, headers=headers)
+def get_gemini_price(symbol):
+    pair = symbol.replace("/", "").lower()
+    url = f"https://api.gemini.com/v1/pubticker/{pair}"
+    resp = requests.get(url)
     resp.raise_for_status()
-    return float(resp.json()["trade"]["p"])
-
+    return float(resp.json()["ask"])
 
 
 def start(state: AgentState):
@@ -237,14 +232,14 @@ if __name__ == "__main__":
 
     # 👇 AUTO-RUN CONFIG OVERRIDE (no questionary, no argparse)
     #LIVE
-    tickers = ["AAPL", "MSFT", "NVDA", "TSLA", "GOOGL"]
+    tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOT/USD"]
     #TEST
     #tickers = ["AAPL", "NVDA", "TSLA"]
     selected_analysts = list(get_analyst_nodes().keys())
     #LIVE
-    model_choice = "gpt-4o"
+    #model_choice = "gpt-4o"
     #TEST
-    #model_choice = "o3-mini"
+    model_choice = "o3-mini"
     model_info = get_model_info(model_choice)
     model_provider = model_info.provider.value if model_info else "Unknown"
     show_reasoning = False
@@ -260,30 +255,74 @@ if __name__ == "__main__":
 
     # Initialize portfolio with cash amount and stock positions
     # Initialize portfolio with cash amount and stock positions
-    alpaca_account = fetch_alpaca_equity()
-    # 🔧 Estimate margin requirement from equity and buying power
-    equity = alpaca_account["equity"]
-    buying_power = alpaca_account["buying_power"]
-    
-    leverage = (buying_power / equity) if equity else 1
-    margin_requirement = 1 / float(alpaca_account.get("multiplier", 2))
-    
-    alpaca_account["margin_requirement"] = margin_requirement
-    print(f"📐 Estimated Margin Requirement = {margin_requirement:.2f} (Leverage = {leverage:.2f}x)")
+    portfolio_data = get_gemini_portfolio()
 
-    
-    positions = fetch_alpaca_positions()
-    
-    manual_margin_used = sum(
-        abs(pos["short"] * get_alpaca_price(symbol))
+    # extract balances
+    positions = {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in portfolio_data.get("assets", [])
+        if asset["total_balance_crypto"] > 0
+    }
+
+    # extract equity/account info
+    total_value = portfolio_data["total_balance"]
+    cash = next((float(b["total_balance_fiat"]) for b in portfolio_data["assets"] if b["asset"] == "USD"), 0.0)
+    gemini_account = {
+        "equity": total_value,
+        "cash": cash,
+        "buying_power": total_value,
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": total_value,
+        "initial_margin": 0.0,
+    }
+    buying_power = gemini_account["buying_power"]
+
+    portfolio_data = get_gemini_portfolio()
+
+    positions = {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in portfolio_data.get("assets", [])
+        if asset["total_balance_crypto"] > 0
+    }
+
+    cash = next((float(b["total_balance_fiat"]) for b in portfolio_data["assets"] if b["asset"] == "USD"), 0.0)
+    gemini_account = {
+        "equity": portfolio_data["total_balance"],
+        "cash": cash,
+        "buying_power": portfolio_data["total_balance"],
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": portfolio_data["total_balance"],
+        "initial_margin": 0.0,
+    }
+    leverage = 1.0
+    print(f"📐 Margin Requirement = 1.00 (Leverage = 1.00x)")
+
+    manual_margin_used = 0.0  # No margin tracking for Gemini spot
+
+    long_market_value = sum(
+        pos["long"] * get_gemini_price(symbol)
         for symbol, pos in positions.items()
-        if pos["short"] > 0
+        if pos["long"] > 0
     )
-    long_market_value = sum(pos["long"] * get_alpaca_price(symbol) for symbol, pos in positions.items())
-    short_market_value = sum(pos["short"] * get_alpaca_price(symbol) for symbol, pos in positions.items())
+
+    short_market_value = 0.0  # No shorts on Gemini spot trading
     
     # Use Alpaca's reported initial margin directly
-    initial_margin_limit = float(alpaca_account.get("initial_margin", 0.0))
+    initial_margin_limit = float(gemini_account.get("initial_margin", 0.0))
     current_position_exposure = long_market_value + abs(short_market_value)
 
     
@@ -297,9 +336,9 @@ if __name__ == "__main__":
     #remaining_position_limit = max(0, initial_margin_limit - current_position_exposure)
     
     # Loose Margin
-    #remaining_position_limit = min(float(alpaca_account['cash']), float(alpaca_account['buying_power']))
+    #remaining_position_limit = min(float(gemini_account['cash']), float(gemini_account['buying_power']))
     #TAKE FULL MARGIN RISK
-    remaining_position_limit = float(alpaca_account['buying_power'])
+    remaining_position_limit = float(gemini_account['buying_power'])
     print(f"🧮 Using soft remaining position limit = ${remaining_position_limit:.2f} based on cash and buying_power")
     
 
@@ -312,8 +351,8 @@ if __name__ == "__main__":
     
     # Construct portfolio dict
     portfolio = {
-        "cash": alpaca_account["buying_power"],
-        "margin_requirement": alpaca_account["margin_requirement"],
+        "cash": gemini_account["buying_power"],
+        "margin_requirement": gemini_account["margin_requirement"],
         "margin_used": manual_margin_used,
         "positions": positions,
         "cost_basis": cost_basis,
@@ -338,7 +377,7 @@ if __name__ == "__main__":
     print("\n📊 RISK-CHECKED MAX SHARES PER ASSET:")
     for symbol in tickers:
         try:
-            price = get_alpaca_price(symbol)
+            price = get_gemini_price(symbol)
             limit = portfolio["remaining_position_limit"]
             max_shares = max(0, int(limit // price))
             print(f"\n🧮 CALCULATING MAX SHARES for {symbol}:")
@@ -372,11 +411,11 @@ if __name__ == "__main__":
 
     # ✅ Print snapshot of holdings for confirmation
     print("\n🔎 RAW VALUES FROM ALPACA ACCOUNT FETCH:")
-    print(f"  ➤ equity                 → {alpaca_account['equity']}")
-    print(f"  ➤ maintenance_margin     → {alpaca_account['margin_requirement']}")
-    print(f"  ➤ margin_used            → {alpaca_account['margin_used']}")
-    print(f"  ➤ buying_power           → {alpaca_account['buying_power']}")
-    print(f"  ➤ portfolio_value        → {alpaca_account['portfolio_value']}")
+    print(f"  ➤ equity                 → {gemini_account['equity']}")
+    print(f"  ➤ maintenance_margin     → {gemini_account['margin_requirement']}")
+    print(f"  ➤ margin_used            → {gemini_account['margin_used']}")
+    print(f"  ➤ buying_power           → {gemini_account['buying_power']}")
+    print(f"  ➤ portfolio_value        → {gemini_account['portfolio_value']}")
     print(f"  ➤ initial_margin_limit   → {initial_margin_limit:.2f}")
     print(f"  ➤ long_market_value      → {long_market_value:.2f}")
     print(f"  ➤ short_market_value     → {short_market_value:.2f}")
@@ -404,28 +443,6 @@ if __name__ == "__main__":
                 print(f"Short {short_qty} @ ${pos['short_cost_basis']:.2f} (Margin Used: ${pos['short_margin_used']:.2f})", end="")
             print()
     
-    if not TESTING_MODE:
-        clock_url = f"{APCA_API_BASE_URL}/v2/clock"
-        try:
-            print("\n⏰ Checking market hours...")
-            clock_resp = requests.get(clock_url, headers={
-                "APCA-API-KEY-ID": APCA_API_KEY_ID,
-                "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY
-            })
-            clock_resp.raise_for_status()
-            clock_data = clock_resp.json()
-    
-            if not clock_data.get("is_open", False):
-                next_open = clock_data.get("next_open")
-                print(f"🚫 Market is currently closed. Next open time: {next_open}")
-                sys.exit(0)
-            else:
-                print("✅ Market is open.")
-        except Exception as e:
-            print(f"❌ Failed to check market status: {e}")
-            sys.exit(1)
-    else:
-        print("🧪 TESTING_MODE active – skipping market hours check.")
     # Run the hedge fund
     # Allocate shares using total available funds (remaining_position_limit)
     available_funds = portfolio["remaining_position_limit"]
@@ -434,7 +451,7 @@ if __name__ == "__main__":
     print("\n🧮 ALLOCATING FUNDS ACROSS TOP-RANKED ASSETS:")
     for symbol in tickers:
         try:
-            price = get_alpaca_price(symbol)
+            price = get_gemini_price(symbol)
             max_shares = int(available_funds // price)
             if max_shares > 0:
                 buy_plan[symbol] = max_shares
@@ -461,11 +478,11 @@ if __name__ == "__main__":
     for k, v in decisions.items():
         print(f"  {k}: action={v['action']}, qty={v['quantity']}, confidence={v['confidence']:.2f}")
     print("\n💰 ACCOUNT STATUS FROM ALPACA:")
-    print(f"  ➤ Buying Power       = ${alpaca_account['buying_power']:.2f}")
-    print(f"  ➤ Equity             = ${alpaca_account['equity']:.2f}")
-    print(f"  ➤ Portfolio Value    = ${alpaca_account['portfolio_value']:.2f}")
-    print(f"  ➤ Margin Used        = ${alpaca_account['margin_used']:.2f}")
-    print(f"  ➤ Maintenance Margin = ${alpaca_account['margin_requirement']:.2f}")
+    print(f"  ➤ Buying Power       = ${gemini_account['buying_power']:.2f}")
+    print(f"  ➤ Equity             = ${gemini_account['equity']:.2f}")
+    print(f"  ➤ Portfolio Value    = ${gemini_account['portfolio_value']:.2f}")
+    print(f"  ➤ Margin Used        = ${gemini_account['margin_used']:.2f}")
+    print(f"  ➤ Maintenance Margin = ${gemini_account['margin_requirement']:.2f}")
 
     if isinstance(decisions, str):
         decisions = parse_hedge_fund_response(decisions)
@@ -496,7 +513,7 @@ if __name__ == "__main__":
             confidence = details.get("confidence", 0.0)
             if action in ("buy", "short", "sell", "cover") and qty > 0:
                 try:
-                    price = get_alpaca_price(symbol)
+                    price = get_gemini_price(symbol)
                 except Exception as e:
                     print(f"⚠️ Price fetch failed for {symbol}: {e}")
                     continue
@@ -509,7 +526,7 @@ if __name__ == "__main__":
                 print(f"📥 Candidate added: {symbol} → side={action} → mapped_side={'buy' if action == 'cover' else action}, price=${price:.2f}, confidence={confidence}")
                 total_confidence += confidence
         
-        available_funds = alpaca_account["buying_power"]
+        available_funds = gemini_account["buying_power"]
         adjusted_orders = []
         
         if total_confidence == 0:

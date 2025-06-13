@@ -11,7 +11,7 @@ from typing import Tuple, List, Dict, Any, Optional
 
 import sys
 sys.path.append("/root/stock2")
-from config import OPENAI_API_KEY
+from config2 import OPENAI_API_KEY
 
 
 class ModelProvider(str, Enum):
@@ -124,6 +124,11 @@ AVAILABLE_MODELS = [
         model_name="o3-mini",
         provider=ModelProvider.OPENAI
     ),
+    LLMModel(
+        display_name="[openai] gpt-4.1-nano (cheapest OpenAI)",
+        model_name="gpt-4.1-nano",
+        provider=ModelProvider.OPENAI
+    )
 ]
 
 # Define Ollama models separately

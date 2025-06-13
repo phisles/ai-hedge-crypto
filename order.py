@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import csv
 import sys
 sys.path.append("/root/stock2")
-from config import APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL
+from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ORDER_FILE = os.path.join(SCRIPT_DIR, "order-data", "alpaca_order_output.json")
