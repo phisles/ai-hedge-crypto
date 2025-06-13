@@ -129,7 +129,22 @@ def peter_lynch_agent(state: AgentState):
         growth_analysis       = analyze_lynch_growth(financial_line_items)
         fundamentals_analysis = analyze_lynch_fundamentals(financial_line_items)
         valuation_analysis    = analyze_lynch_valuation(financial_line_items, market_cap)
-        sentiment_analysis    = analyze_sentiment(company_news)
+        from collections import Counter
+
+        sentiment_counts = Counter(n.sentiment for n in company_news if n.sentiment)
+        total_articles = sum(sentiment_counts.values())
+
+        sentiment_analysis = {
+            "positive": sentiment_counts.get("positive", 0),
+            "neutral": sentiment_counts.get("neutral", 0),
+            "negative": sentiment_counts.get("negative", 0),
+            "total": total_articles,
+            "score": (
+                (sentiment_counts.get("positive", 0) - sentiment_counts.get("negative", 0)) / total_articles
+                if total_articles > 0 else 0
+            ),
+            "summary": f"{sentiment_counts.get('positive', 0)}↑ / {sentiment_counts.get('neutral', 0)}→ / {sentiment_counts.get('negative', 0)}↓"
+        }
         insider_activity      = analyze_insider_activity(insider_trades)
 
         total_score = (

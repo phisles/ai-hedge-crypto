@@ -35,7 +35,7 @@ def warren_buffett_agent(state: AgentState):
 
     for ticker in tickers:
         progress.update_status("warren_buffett_agent", ticker, "Fetching metrics")
-        metrics = get_financial_metrics(ticker, end_date)
+        metrics_list = get_financial_metrics(ticker, end_date)
         if not metrics_list:
             progress.update_status("warren_buffett_agent", ticker, "No metrics found")
             continue
