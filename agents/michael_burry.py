@@ -49,123 +49,58 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
     tickers: list[str] = data["tickers"]
     start_date = (datetime.fromisoformat(end_date) - timedelta(days=365)).date().isoformat()
 
-    analysis_data: dict[str, dict] = {}
     burry_analysis: dict[str, dict] = {}
 
     for ticker in tickers:
-        # Fetch metrics
         progress.update_status("michael_burry_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date)
 
-        # —— CRYPTO BRANCH START —— 
+        # Build unified analysis_data for LLM
         if ticker.upper().endswith(("/USD", "-USD")) and metrics:
             latest = metrics[0]
-            pct1y     = latest.get("price_change_pct_1y", 0.0)
-            sentiment = latest.get("sentiment_votes_up_pct", 0.0)
-            dev_stars = latest.get("developer_stars", 0)
-
-            score = 0
-            if pct1y is not None:
-                if pct1y > 0.50:        score += 2
-                elif pct1y > 0.20:      score += 1
-            if sentiment is not None and sentiment > 60:      
-                score += 1
-            if dev_stars is not None and dev_stars > 20000:  
-                score += 1
-
-            if score >= 3:
-                sig = "bullish"
-            elif score == 0:
-                sig = "bearish"
-            else:
-                sig = "neutral"
-
-            conf = round(min(score / 4, 1.0) * 100)
-            burry_analysis[ticker] = {
-                "signal": sig,
-                "confidence": conf,
-                "reasoning": (
-                    f"1y Δ {pct1y:.1%}, sentiment {sentiment:.1f}%, "
-                    f"dev stars {dev_stars}"
-                )
+            analysis_input = {
+                "price_change_pct_1y": latest.get("price_change_pct_1y", 0.0),
+                "sentiment_votes_up_pct": latest.get("sentiment_votes_up_pct", 0.0),
+                "developer_stars": latest.get("developer_stars", 0),
+                "market_cap": latest.get("market_cap"),
+                "volume_24h": latest.get("volume_24h"),
+                "converted_volume_usd": latest.get("converted_volume_usd"),
             }
-            progress.update_status("michael_burry_agent", ticker, "Done (crypto)")
-            continue
-        # —— CRYPTO BRANCH END —— 
-
-        # Equity path
-        progress.update_status("michael_burry_agent", ticker, "Fetching line items")
-        line_items = search_line_items(
-            ticker,
-            [
-                "free_cash_flow",
-                "net_income",
-                "total_debt",
-                "cash_and_equivalents",
-                "total_assets",
-                "total_liabilities",
-                "outstanding_shares",
-                "issuance_or_purchase_of_equity_shares",
-            ],
-            end_date,
-        )
-
-        progress.update_status("michael_burry_agent", ticker, "Fetching insider trades")
-        insider_trades = get_insider_trades(ticker, end_date=end_date, start_date=start_date)
-
-        progress.update_status("michael_burry_agent", ticker, "Fetching company news")
-        news = get_company_news(ticker, end_date=end_date, start_date=start_date, limit=250)
-
-        progress.update_status("michael_burry_agent", ticker, "Fetching market cap")
-        market_cap = get_market_cap(ticker, end_date)
-
-        progress.update_status("michael_burry_agent", ticker, "Analyzing value")
-        value_analysis = _analyze_value(metrics, line_items, market_cap)
-
-        progress.update_status("michael_burry_agent", ticker, "Analyzing balance sheet")
-        balance_sheet_analysis = _analyze_balance_sheet(metrics, line_items)
-
-        progress.update_status("michael_burry_agent", ticker, "Analyzing insider activity")
-        insider_analysis = _analyze_insider_activity(insider_trades)
-
-        progress.update_status("michael_burry_agent", ticker, "Analyzing contrarian sentiment")
-        contrarian_analysis = _analyze_contrarian_sentiment(news)
-
-        total_score = (
-            value_analysis["score"]
-            + balance_sheet_analysis["score"]
-            + insider_analysis["score"]
-            + contrarian_analysis["score"]
-        )
-        max_score = (
-            value_analysis["max_score"]
-            + balance_sheet_analysis["max_score"]
-            + insider_analysis["max_score"]
-            + contrarian_analysis["max_score"]
-        )
-
-        if total_score >= 0.7 * max_score:
-            signal = "bullish"
-        elif total_score <= 0.3 * max_score:
-            signal = "bearish"
+            progress.update_status("michael_burry_agent", ticker, "Prepared crypto data for LLM")
         else:
-            signal = "neutral"
+            # Equity path: gather detailed sub-analyses
+            progress.update_status("michael_burry_agent", ticker, "Fetching line items")
+            line_items = search_line_items(
+                ticker,
+                [
+                    "free_cash_flow", "net_income", "total_debt", "cash_and_equivalents",
+                    "total_assets", "total_liabilities", "outstanding_shares",
+                    "issuance_or_purchase_of_equity_shares",
+                ],
+                end_date,
+            )
+            progress.update_status("michael_burry_agent", ticker, "Fetching insider trades")
+            insider_trades = get_insider_trades(ticker, end_date=end_date, start_date=start_date)
+            progress.update_status("michael_burry_agent", ticker, "Fetching company news")
+            news = get_company_news(ticker, end_date=end_date, start_date=start_date, limit=10)
+            progress.update_status("michael_burry_agent", ticker, "Fetching market cap")
+            market_cap = get_market_cap(ticker, end_date)
 
-        analysis_data[ticker] = {
-            "signal": signal,
-            "score": total_score,
-            "max_score": max_score,
-            "value_analysis": value_analysis,
-            "balance_sheet_analysis": balance_sheet_analysis,
-            "insider_analysis": insider_analysis,
-            "contrarian_analysis": contrarian_analysis,
-            "market_cap": market_cap,
-        }
+            # Compose analysis_data dict
+            analysis_input = {
+                "metrics": metrics,
+                "line_items": line_items,
+                "insider_trades": insider_trades,
+                "news": news,
+                "market_cap": market_cap,
+            }
+            progress.update_status("michael_burry_agent", ticker, "Prepared equity data for LLM")
 
+        # Invoke LLM for final signal
         progress.update_status("michael_burry_agent", ticker, "Generating LLM output")
         burry_output = _generate_burry_output(
             ticker=ticker,
-            analysis_data=analysis_data,
+            analysis_data=analysis_input,
             model_name=state["metadata"]["model_name"],
             model_provider=state["metadata"]["model_provider"],
         )
@@ -175,16 +110,15 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
             "confidence": burry_output.confidence,
             "reasoning": burry_output.reasoning,
         }
-
         progress.update_status("michael_burry_agent", ticker, "Done")
 
     message = HumanMessage(content=json.dumps(burry_analysis), name="michael_burry_agent")
-
     if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(burry_analysis, "Michael Burry Agent")
 
     state["data"]["analyst_signals"]["michael_burry_agent"] = burry_analysis
     return {"messages": [message], "data": state["data"]}
+
 
 
 ###############################################################################
@@ -381,18 +315,18 @@ If bearish:
 {analysis_data}
 
 Return the trading signal exactly in this JSON format:
-{
-  "signal": "bullish" | "bearish" | "neutral",
-  "confidence": float between 0 and 100,
-  "reasoning": "string"
-}"""
+{{{{
+  \"signal\": \"bullish\" | \"bearish\" | \"neutral\",
+  \"confidence\": float between 0 and 100,
+  \"reasoning\": \"string\"
+}}}}"""
             ),
         ]
     )
 
     prompt = template.invoke({
         "analysis_data": json.dumps(analysis_data, indent=2),
-        "ticker": ticker
+        "ticker": ticker,
     })
 
     def create_default_michael_burry_signal():
@@ -410,3 +344,4 @@ Return the trading signal exactly in this JSON format:
         agent_name="michael_burry_agent",
         default_factory=create_default_michael_burry_signal,
     )
+

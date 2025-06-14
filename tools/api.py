@@ -93,7 +93,7 @@ def fetch_with_retry(url, max_retries=20):
     return None
 
 def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
-    """Fetch historical daily close prices from Gemini API."""
+    """Fetch historical daily close prices from Gemini API in year-sized chunks."""
 
     if cached := _cache.get_prices(ticker, start_date, end_date):
         print(f"📦 Loaded cached prices for {ticker} ({start_date} → {end_date}): {len(cached)} entries")
@@ -104,41 +104,35 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
 
     symbol = ticker.replace("/", "").replace("-", "").lower()
     start_dt = datetime.datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.datetime.strptime(end_date, "%Y-%m-%d")
-    start_ts = int(time.mktime(start_dt.timetuple())) * 1000
-    end_ts = int(time.mktime(end_dt.timetuple())) * 1000
+    end_dt   = datetime.datetime.strptime(end_date,   "%Y-%m-%d")
+    url      = f"https://api.gemini.com/v2/candles/{symbol}/1day"
 
-    url = f"https://api.gemini.com/v2/candles/{symbol}/1day"
-    params = {"start": start_ts, "end": end_ts}
+    all_candles = []
+    period_start = start_dt
+    while period_start <= end_dt:
+        period_end = min(period_start + datetime.timedelta(days=365), end_dt)
+        start_ts   = int(time.mktime(period_start.timetuple())) * 1000
+        end_ts     = int(time.mktime(period_end.timetuple()))   * 1000
 
-    print(f"🌐 Requesting Gemini candles for {symbol} from {start_date} to {end_date}...")
-    try:
-        response = requests.get(url, params=params, timeout=10)
-    except requests.exceptions.Timeout:
-        raise Exception(f"⏱ Timeout while fetching Gemini price data for {ticker}")
-    except Exception as e:
-        raise Exception(f"❌ Error during Gemini price fetch for {ticker}: {e}")
+        print(f"🌐 Requesting Gemini candles for {symbol} {period_start.date()}→{period_end.date()}...")
+        try:
+            response = requests.get(url, params={"start": start_ts, "end": end_ts}, timeout=10)
+        except requests.exceptions.ReadTimeout:
+            print(f"⏳ Read timeout for {symbol} {period_start.date()}→{period_end.date()}, retrying in 2s…")
+            time.sleep(2)
+            response = requests.get(url, params={"start": start_ts, "end": end_ts}, timeout=10)
+        if response.status_code != 200:
+            raise Exception(f"❌ Gemini fetch error {response.status_code} for {ticker}: {response.text}")
 
-    if response.status_code != 200:
-        raise Exception(f"Error fetching Gemini price data: {ticker} - {response.status_code} - {response.text}")
+        for ts, o, h, l, c, v in response.json():
+            dt = datetime.datetime.utcfromtimestamp(ts/1000).strftime("%Y-%m-%d")
+            all_candles.append(Price(time=dt, open=o, high=h, low=l, close=c, volume=int(v)))
 
-    data = response.json()
-    result = []
-    for candle in data:
-        ts, _, _, _, close, _ = candle
-        dt = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
-        result.append(Price(
-            time=dt,
-            open=candle[1],
-            high=candle[2],
-            low=candle[3],
-            close=candle[4],
-            volume=int(candle[5])
-        ))
+        period_start = period_end + datetime.timedelta(days=1)
 
-    print(f"📊 Parsed {len(result)} candles from Gemini for {symbol}")
-    _cache.set_prices(ticker, start_date, end_date, [p.model_dump() for p in result])
-    return result
+    print(f"📊 Parsed {len(all_candles)} candles from Gemini for {symbol}")
+    _cache.set_prices(ticker, start_date, end_date, [p.model_dump() for p in all_candles])
+    return all_candles
 
 def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     cache = get_cache()
@@ -625,18 +619,22 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
         usd = tx.get("input_total_usd", 0)
         btc = tx.get("input_total", 0) / 1e8
         if usd >= 1_000_000:
-            trades.append(InsiderTrade(
-                insider_name="Unknown Wallet",
-                role="Whale",
-                ticker=ticker,
-                transaction_type="Large Transfer",
-                shares=btc,
-                price=usd / btc if btc else 0,
-                transaction_date=tx["date"],
-                filing_date=tx["date"]
-            ))
+            trades.append({
+                "insider_name": "Unknown Wallet",
+                "issuer": ticker,
+                "name": "Whale",
+                "title": "N/A",
+                "is_board_director": False,
+                "transaction_shares": btc,
+                "transaction_price_per_share": usd / btc if btc else 0,
+                "transaction_value": usd,
+                "shares_owned_before_transaction": None,
+                "shares_owned_after_transaction": None,
+                "security_title": "Token Transfer",
+                "filing_date": tx["date"]
+            })
 
-    _cache.set_insider_trades(ticker, end_date, [t.model_dump() for t in trades])
+    _cache.set_insider_trades(ticker, end_date, trades)
     return trades
 
 _in_progress = {}

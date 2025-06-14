@@ -82,11 +82,20 @@ def stanley_druckenmiller_agent(state: AgentState):
         }
         progress.update_status("stanley_druckenmiller_agent", ticker, "Done")
 
-    message = HumanMessage(content=json.dumps(druck_analysis), name="stanley_druckenmiller_agent")
-    if state["metadata"].get("show_reasoning"):
-        show_agent_reasoning(druck_analysis, "Stanley Druckenmiller Agent")
+    final_results = {}
+    for ticker, analysis in druck_analysis.items():
+        llm_signal = generate_druckenmiller_output(
+            ticker,
+            analysis,
+            state["metadata"]["model_name"],
+            state["metadata"]["model_provider"],
+        )
+        final_results[ticker] = llm_signal.dict()
+        if state["metadata"].get("show_reasoning"):
+            show_agent_reasoning(llm_signal.dict(), f"Stanley Druckenmiller Agent: {ticker}")
 
-    state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = druck_analysis
+    state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = final_results
+    message = HumanMessage(content=json.dumps(final_results), name="stanley_druckenmiller_agent")
     return {"messages": [message], "data": state["data"]}
 
 
@@ -399,7 +408,7 @@ Rules:
 - Reward tokens with strong momentum and improving on-chain metrics.
 - Penalize assets with high volatility or negative on-chain signals.
 - Reference specific numeric values from analysis_data in your reasoning.
-- Output strictly JSON: {"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}
+- Output strictly JSON: {{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}}
 
 When reasoning:
 - Cite price change percentages and volatility stats.
@@ -420,7 +429,7 @@ Based on the analysis data for {ticker}:
 {analysis_data}
 
 Return the signal in JSON:
-{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}
+{{"signal":"bullish/bearish/neutral","confidence":float,"reasoning":"string"}}
 """),
     ])
     prompt = template.invoke({"ticker": ticker, "analysis_data": json.dumps(analysis_data, indent=2)})

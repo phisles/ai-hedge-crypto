@@ -171,8 +171,8 @@ def create_workflow(selected_analysts=None):
 if __name__ == "__main__":
     # Configuration
     #tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOT/USD"]
-    #tickers = ["BTC/USD", "ETH/USD"]
-    tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
+    tickers = ["BTC/USD", "ETH/USD"]
+    #tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
     
     
     #LIVE
@@ -236,18 +236,13 @@ if __name__ == "__main__":
             print(f"⚠️ Failed to fetch price for {symbol}: {e}")
 
     # Allocate funds across top assets
-    available_funds = portfolio["remaining_position_limit"]
-    print("\n🧮 ALLOCATING FUNDS ACROSS TOP-RANKED ASSETS:")
-    buy_plan = {}
+    print("\n📊 MAX AFFORDABLE QUANTITY PER ASSET (using full cash):")
     for symbol in tickers:
         try:
             price = get_gemini_price(symbol)
-            qty = round(available_funds / price, 8)
-            if qty > 0:
-                buy_plan[symbol] = qty
-                used = qty * price
-                available_funds -= used
-                print(f"  ✅ {symbol}: qty={qty}, used=${used:.2f}, remaining=${available_funds:.2f}")
+            qty = round(portfolio["remaining_position_limit"] / price, 8)
+            print(f"  ✅ {symbol}: max_qty={qty}, price=${price:.2f}")
+            portfolio.setdefault("max_shares", {})[symbol] = qty
         except Exception as e:
             print(f"⚠️ Price fetch failed for {symbol}: {e}")
 

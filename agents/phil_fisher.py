@@ -3,7 +3,6 @@ from tools.api import (
     get_financial_metrics,
     get_market_cap,
     search_line_items,
-    get_insider_trades,
     get_company_news,
 )
 from langchain_core.prompts import ChatPromptTemplate
@@ -40,105 +39,55 @@ def phil_fisher_agent(state: AgentState):
 
         if ticker.upper().endswith(("/USD", "-USD")):
             latest = metrics[0]
-            price_1y   = latest.get("price_change_pct_1y", 0.0)
-            price_30d  = latest.get("price_change_pct_30d", 0.0)
-            vol_mc     = latest.get("volume_to_market_cap", 0.0)
-            dev_stars  = latest.get("developer_stars", 0)
-            sentiment  = analyze_crypto_sentiment_from_metrics(latest)
+            sentiment = analyze_crypto_sentiment_from_metrics(latest)
 
-            # Growth & Quality (1-year momentum)
-            if price_1y > 0.50:
-                raw_g = 3
-            elif price_1y > 0.20:
-                raw_g = 2
-            elif price_1y > 0.10:
-                raw_g = 1
-            else:
-                raw_g = 0
-            growth_quality = {
-                "score": raw_g * 10 / 3,
-                "details": f"1y Δ {price_1y:.1%}"
-            }
-
-            # Margins & Stability (30-day momentum)
-            if price_30d > 0.20:
-                raw_m = 2
-            elif price_30d > 0.10:
-                raw_m = 1
-            else:
-                raw_m = 0
-            margins_stability = {
-                "score": raw_m * 10 / 2,
-                "details": f"30d Δ {price_30d:.1%}"
-            }
-
-            # Management Efficiency (developer activity)
-            if dev_stars > 50000:
-                raw_me = 2
-            elif dev_stars > 20000:
-                raw_me = 1
-            else:
-                raw_me = 0
-            management_efficiency = {
-                "score": raw_me * 10 / 2,
-                "details": f"Dev stars {dev_stars}"
-            }
-
-            # Valuation (volume-to-market-cap)
-            if vol_mc > 0.05:
-                raw_v = 2
-            elif vol_mc > 0.02:
-                raw_v = 1
-            else:
-                raw_v = 0
-            fisher_valuation = {
-                "score": raw_v * 10 / 2,
-                "details": f"Vol/MC {vol_mc:.1%}"
-            }
-
-            # Insider activity (not applicable to crypto)
-            insider_activity = {
-                "score": 5,
-                "details": "No insider data for crypto"
-            }
-
-            # Community sentiment
-            sentiment_analysis = {
-                "score": sentiment["score"],
-                "details": sentiment["details"]
-            }
-
-            # Combine with Fisher weights
-            total_score = (
-                growth_quality["score"] * 0.30
-                + margins_stability["score"] * 0.25
-                + management_efficiency["score"] * 0.20
-                + fisher_valuation["score"] * 0.15
-                + insider_activity["score"] * 0.05
-                + sentiment_analysis["score"] * 0.05
+            # fetch on-chain & corporate data
+            progress.update_status("phil_fisher_agent", ticker, "Fetching financial line items")
+            financial_line_items = search_line_items(
+                ticker=ticker,
+                line_items=["revenue", "gross_profit", "price", "volume"],
+                end_date=end_date
             )
-            signal = (
-                "bullish" if total_score >= 7.5
-                else "bearish" if total_score <= 4.5
-                else "neutral"
-            )
-            confidence = round(total_score / 10 * 100)
+            progress.update_status("phil_fisher_agent", ticker, "Fetching market cap")
+            market_cap = get_market_cap(ticker, end_date)
+            progress.update_status("phil_fisher_agent", ticker, "Fetching company news")
+            company_news = get_company_news(ticker, end_date)
 
-            reasoning = ", ".join([
-                growth_quality["details"],
-                margins_stability["details"],
-                management_efficiency["details"],
-                fisher_valuation["details"],
-                insider_activity["details"],
-                sentiment_analysis["details"],
-            ])
+            # prepare everything for the LLM
+            analysis_data = {
+                "latest_metrics": latest,
+                "market_cap": market_cap,
+                "company_news": [n.dict() for n in company_news],
+                "financial_line_items": [fi.dict() for fi in financial_line_items],
+                "onchain_growth": {
+                    "1y_change_pct": latest.get("price_change_pct_1y", 0.0),
+                    "30d_change_pct": latest.get("price_change_pct_30d", 0.0),
+                },
+                "onchain_valuation": {
+                    "volume_to_market_cap": latest.get("volume_to_market_cap", 0.0),
+                    "developer_stars": latest.get("developer_stars", 0),
+                },
+                "community_sentiment": {
+                    "sentiment_votes_up_pct": latest.get("sentiment_votes_up_pct", None)
+                }
+            }
+
+            # ask the LLM to do the Phil-Fisher scoring & reasoning
+            signal_obj = generate_fisher_output(
+                ticker,
+                analysis_data,
+                state["metadata"]["model_name"],
+                state["metadata"]["model_provider"],
+            )
 
             fisher_analysis[ticker] = {
-                "signal": signal,
-                "confidence": confidence,
-                "reasoning": reasoning
+                "signal": signal_obj.signal,
+                "confidence": signal_obj.confidence,
+                "reasoning": signal_obj.reasoning,
             }
-            progress.update_status("phil_fisher_agent", ticker, "Done (crypto)")
+            if state["metadata"].get("show_reasoning"):
+                show_agent_reasoning({ticker: signal_obj.dict()}, "Phil Fisher Agent")
+            progress.update_status("phil_fisher_agent", ticker, "Done (LLM)")
             continue
 
     message = HumanMessage(content=json.dumps(fisher_analysis), name="phil_fisher_agent")
@@ -523,11 +472,11 @@ def generate_fisher_output(
 8. Conclude with a clear stance (bullish, bearish, or neutral) and confidence.
 
 Return only valid JSON:
-{
+{{
   "signal": "bullish"|"bearish"|"neutral",
   "confidence": 0–100,
   "reasoning": "string"
-}"""
+}}"""
             ),
             (
                 "human",

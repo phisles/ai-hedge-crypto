@@ -1,10 +1,8 @@
-import sys
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
 from colorama import Fore, Style, init
-import questionary
 from agents.portfolio_manager import portfolio_management_agent
 from agents.risk_manager import risk_management_agent
 from graph.state import AgentState
@@ -12,68 +10,106 @@ from utils.display import print_trading_output
 from utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from utils.progress import progress
 from llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
-from utils.ollama import ensure_ollama_and_model
-
-import argparse
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from utils.visualize import save_graph_as_png
 import json
-
-# Load environment variables from explicit path
-load_dotenv(dotenv_path="/Users/philip/Desktop/Code/ai-hedge-fund/.env")
-
-# Force debug to confirm what was loaded
 import os
-print("🧪 Loaded from .env:")
-print("APCA_API_KEY_ID =", os.getenv("APCA_API_KEY_ID"))
-print("APCA_API_SECRET_KEY =", os.getenv("APCA_API_SECRET_KEY"))
+import sys
+import base64
+import time
+import hashlib
+import requests
+import hmac
+
+sys.path.append("/root/stock2")
+# Force debug to confirm what was loaded
+
+from config2 import GEM_API_KEY, GEM_API_SECRET  # Use your Gemini keys
+
 
 init(autoreset=True)
+TESTING_MODE = False  # Set to False in production
 
-
-def fetch_alpaca_equity():
-    import os
-    import requests
-
-    api_key = os.getenv("APCA_API_KEY_ID")
-    api_secret_key = os.getenv("APCA_API_SECRET_KEY")
-    base_url = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
-
-    print("\n🔍 DEBUG: Attempting to fetch Alpaca equity")
-    print(f"🔑 API Key: {api_key}")
-    print(f"🔑 Secret Key: {api_secret_key}")
-    print(f"🌐 Base URL: {base_url}")
-
-    if not api_key or not api_secret_key:
-        print(f"{Fore.RED}❌ Missing Alpaca API credentials. Check your .env file.{Style.RESET_ALL}")
-        sys.exit(1)
+def get_gemini_portfolio():
+    url = "https://api.gemini.com/v1/notionalbalances/usd"
+    payload = {
+        "request": "/v1/notionalbalances/usd",
+        "nonce": int(time.time() * 1000)
+    }
+    encoded_payload = base64.b64encode(json.dumps(payload).encode()).decode()
+    signature = hmac.new(GEM_API_SECRET.encode(), encoded_payload.encode(), hashlib.sha384).hexdigest()
 
     headers = {
-        "accept": "application/json",
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret_key
+        "X-GEMINI-APIKEY": GEM_API_KEY,
+        "X-GEMINI-PAYLOAD": encoded_payload,
+        "X-GEMINI-SIGNATURE": signature,
+        "Content-Type": "application/json"
     }
 
+    print("🔐 Gemini API Key:", GEM_API_KEY[:6] + "..." + GEM_API_KEY[-4:])
+    print("🌐 Endpoint:        ", url)
+    print("📤 Payload:")
+    print(json.dumps(payload, indent=2))
+    print("📤 Headers:")
+    print(json.dumps(headers, indent=2))
+
     try:
-        print("📡 Sending request to Alpaca...")
-        resp = requests.get(f"{base_url}/v2/account", headers=headers)
-        print(f"🔁 Response Status: {resp.status_code}")
-        print(f"📝 Response Body: {resp.text}")
+        response = requests.post(url, headers=headers)
+        print(f"📥 Raw Response Code: {response.status_code}")
+        print("📥 Raw Response Body:")
+        print(response.text)
+        response.raise_for_status()
 
-        resp.raise_for_status()
-        alpaca_equity = float(resp.json()["equity"])
-        print(f"{Fore.YELLOW}📊 Using Alpaca account equity: ${alpaca_equity:,.2f}{Style.RESET_ALL}")
-        return alpaca_equity
+        data = response.json()
+        total_value = sum(float(balance["amountNotional"]) for balance in data if "amountNotional" in balance)
+        return {
+            "total_balance": total_value,
+            "assets": [
+                {
+                    "asset": balance["currency"],
+                    "total_balance_fiat": float(balance["amountNotional"]),
+                    "total_balance_crypto": float(balance["available"])
+                }
+                for balance in data if "amountNotional" in balance
+            ]
+        }
 
-    except requests.exceptions.HTTPError as http_err:
-        print(f"{Fore.RED}❌ HTTP error occurred: {http_err}{Style.RESET_ALL}")
-    except requests.exceptions.RequestException as req_err:
-        print(f"{Fore.RED}❌ Request exception: {req_err}{Style.RESET_ALL}")
     except Exception as e:
-        print(f"{Fore.RED}⚠️ Unexpected error: {e}{Style.RESET_ALL}")
+        print(f"❌ ERROR fetching Gemini portfolio: {e}")
+        return {
+            "total_balance": 0.0,
+            "assets": []
+        }
 
-    sys.exit(1)
+def fetch_gemini_balances():
+    portfolio = get_gemini_portfolio()
+    assets = portfolio.get("assets", [])
+    return {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in assets
+        if asset["total_balance_crypto"] > 0
+    }
+
+def fetch_gemini_equity():
+    portfolio = get_gemini_portfolio()
+    assets = portfolio.get("assets", [])
+    total_value = sum(float(balance["total_balance_fiat"]) for balance in assets)
+
+    return {
+        "equity": total_value,
+        "cash": next((float(b["total_balance_fiat"]) for b in assets if b["asset"] == "USD"), 0.0),
+        "buying_power": total_value,
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": total_value,
+        "initial_margin": 0.0,
+    }
 
 def parse_hedge_fund_response(response):
     """Parses a JSON string and returns a dictionary."""
@@ -108,6 +144,9 @@ def run_hedge_fund(
     try:
         # Create a new workflow if analysts are customized
         if selected_analysts:
+            from pprint import pprint
+            print("\n🧠 Available analyst keys from get_analyst_nodes():")
+            pprint(get_analyst_nodes().keys())
             workflow = create_workflow(selected_analysts)
             agent = workflow.compile()
         else:
@@ -126,7 +165,6 @@ def run_hedge_fund(
                     "start_date": start_date,
                     "end_date": end_date,
                     "analyst_signals": {},
-                    "max_shares": portfolio.get("max_shares", {}),  # ✅ required for risk_management_agent
                 },
                 "metadata": {
                     "show_reasoning": show_reasoning,
@@ -143,6 +181,13 @@ def run_hedge_fund(
     finally:
         # Stop progress tracking
         progress.stop()
+
+def get_gemini_price(symbol):
+    pair = symbol.replace("/", "").lower()
+    url = f"https://api.gemini.com/v1/pubticker/{pair}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    return float(resp.json()["ask"])
 
 
 def start(state: AgentState):
@@ -184,182 +229,242 @@ def create_workflow(selected_analysts=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the hedge fund trading system")
-    parser.add_argument(
-        "--initial-cash",
-        type=float,
-        default=100000.0,
-        help="Initial cash position. Defaults to 100000.0)"
-    )
-    parser.add_argument(
-        "--margin-requirement",
-        type=float,
-        default=0.0,
-        help="Initial margin requirement. Defaults to 0.0"
-    )
-    parser.add_argument("--tickers", type=str, required=True, help="Comma-separated list of stock ticker symbols")
-    parser.add_argument(
-        "--start-date",
-        type=str,
-        help="Start date (YYYY-MM-DD). Defaults to 3 months before end date",
-    )
-    parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Defaults to today")
-    parser.add_argument("--show-reasoning", action="store_true", help="Show reasoning from each agent")
-    parser.add_argument(
-        "--show-agent-graph", action="store_true", help="Show the agent graph"
-    )
-    parser.add_argument(
-        "--ollama", action="store_true", help="Use Ollama for local LLM inference"
-    )
 
-    args = parser.parse_args()
+    # 👇 AUTO-RUN CONFIG OVERRIDE (no questionary, no argparse)
+    #LIVE
+    tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOT/USD"]
+    #TEST
+    #tickers = ["AAPL", "NVDA", "TSLA"]
+    selected_analysts = list(get_analyst_nodes().keys())
+    #LIVE
+    #model_choice = "gpt-4o"
+    #TEST
+    model_choice = "o3-mini"
+    model_info = get_model_info(model_choice)
+    model_provider = model_info.provider.value if model_info else "Unknown"
+    show_reasoning = False
 
-    # Parse tickers from comma-separated string
-    tickers = [ticker.strip() for ticker in args.tickers.split(",")]
-
-    # Select analysts
-    selected_analysts = None
-    choices = questionary.checkbox(
-        "Select your AI analysts.",
-        choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-        instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
-        validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-        style=questionary.Style(
-            [
-                ("checkbox-selected", "fg:green"),
-                ("selected", "fg:green noinherit"),
-                ("highlighted", "noinherit"),
-                ("pointer", "noinherit"),
-            ]
-        ),
-    ).ask()
-
-    if not choices:
-        print("\n\nInterrupt received. Exiting...")
-        sys.exit(0)
-    else:
-        selected_analysts = choices
-        print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
-
-    # Select LLM model based on whether Ollama is being used
-    model_choice = None
-    model_provider = None
-    
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
-        
-        # Select from Ollama-specific models
-        model_choice = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
-            style=questionary.Style([
-                ("selected", "fg:green bold"),
-                ("pointer", "fg:green bold"),
-                ("highlighted", "fg:green"),
-                ("answer", "fg:green bold"),
-            ])
-        ).ask()
-        
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-        
-        # Ensure Ollama is installed, running, and the model is available
-        if not ensure_ollama_and_model(model_choice):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            sys.exit(1)
-        
-        model_provider = ModelProvider.OLLAMA.value
-        print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_choice}{Style.RESET_ALL}\n")
-    else:
-        # Use the standard cloud-based LLM selection
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in LLM_ORDER],
-            style=questionary.Style([
-                ("selected", "fg:green bold"),
-                ("pointer", "fg:green bold"),
-                ("highlighted", "fg:green"),
-                ("answer", "fg:green bold"),
-            ])
-        ).ask()
-
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-        else:
-            # Get model info using the helper function
-            model_info = get_model_info(model_choice)
-            if model_info:
-                model_provider = model_info.provider.value
-                print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_choice}{Style.RESET_ALL}\n")
-            else:
-                model_provider = "Unknown"
-                print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_choice}{Style.RESET_ALL}\n")
+    # Set dates (auto)
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=7)).strftime("%Y-%m-%d")
 
     # Create the workflow with selected analysts
     workflow = create_workflow(selected_analysts)
     app = workflow.compile()
-
-    if args.show_agent_graph:
-        file_path = ""
-        if selected_analysts is not None:
-            for selected_analyst in selected_analysts:
-                file_path += selected_analyst + "_"
-            file_path += "graph.png"
-        save_graph_as_png(app, file_path)
-
-    # Validate dates if provided
-    if args.start_date:
-        try:
-            datetime.strptime(args.start_date, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("Start date must be in YYYY-MM-DD format")
-
-    if args.end_date:
-        try:
-            datetime.strptime(args.end_date, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("End date must be in YYYY-MM-DD format")
-
     # Set the start and end dates
-    end_date = args.end_date or datetime.now().strftime("%Y-%m-%d")
-    if not args.start_date:
-        # Calculate 3 months before end_date
-        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-        start_date = (end_date_obj - relativedelta(months=3)).strftime("%Y-%m-%d")
-    else:
-        start_date = args.start_date
 
     # Initialize portfolio with cash amount and stock positions
+    # Initialize portfolio with cash amount and stock positions
+    portfolio_data = get_gemini_portfolio()
+
+    # extract balances
+    positions = {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in portfolio_data.get("assets", [])
+        if asset["total_balance_crypto"] > 0
+    }
+
+    # extract equity/account info
+    total_value = portfolio_data["total_balance"]
+    cash = next((float(b["total_balance_fiat"]) for b in portfolio_data["assets"] if b["asset"] == "USD"), 0.0)
+    gemini_account = {
+        "equity": total_value,
+        "cash": cash,
+        "buying_power": total_value,
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": total_value,
+        "initial_margin": 0.0,
+    }
+    buying_power = gemini_account["buying_power"]
+
+    portfolio_data = get_gemini_portfolio()
+
+    positions = {
+        f"{asset['asset'].upper()}/USD": {
+            "long": asset["total_balance_crypto"],
+            "short": 0.0,
+            "long_cost_basis": 0.0,
+            "short_cost_basis": 0.0,
+            "short_margin_used": 0.0
+        }
+        for asset in portfolio_data.get("assets", [])
+        if asset["total_balance_crypto"] > 0
+    }
+
+    cash = next((float(b["total_balance_fiat"]) for b in portfolio_data["assets"] if b["asset"] == "USD"), 0.0)
+    gemini_account = {
+        "equity": portfolio_data["total_balance"],
+        "cash": cash,
+        "buying_power": portfolio_data["total_balance"],
+        "margin_requirement": 1.0,
+        "margin_used": 0.0,
+        "portfolio_value": portfolio_data["total_balance"],
+        "initial_margin": 0.0,
+    }
+    leverage = 1.0
+    print(f"📐 Margin Requirement = 1.00 (Leverage = 1.00x)")
+
+    manual_margin_used = 0.0  # No margin tracking for Gemini spot
+
+    long_market_value = sum(
+        pos["long"] * get_gemini_price(symbol)
+        for symbol, pos in positions.items()
+        if pos["long"] > 0
+    )
+
+    short_market_value = 0.0  # No shorts on Gemini spot trading
+    
+    # Use Alpaca's reported initial margin directly
+    initial_margin_limit = float(gemini_account.get("initial_margin", 0.0))
+    current_position_exposure = long_market_value + abs(short_market_value)
+
+    
+    cost_basis = {
+        symbol: pos["long"] * pos["long_cost_basis"] + pos["short"] * pos["short_cost_basis"]
+        for symbol, pos in positions.items()
+    }
+    
+    # ✅ Choose margin enforcement mode:
+    # Strict Margin
+    #remaining_position_limit = max(0, initial_margin_limit - current_position_exposure)
+    
+    # Loose Margin
+    #remaining_position_limit = min(float(gemini_account['cash']), float(gemini_account['buying_power']))
+    #TAKE FULL MARGIN RISK
+    remaining_position_limit = float(gemini_account['buying_power'])
+    print(f"🧮 Using soft remaining position limit = ${remaining_position_limit:.2f} based on cash and buying_power")
+    
+
+    
+    cost_basis = {
+        symbol: pos["long"] * pos["long_cost_basis"] + pos["short"] * pos["short_cost_basis"]
+        for symbol, pos in positions.items()
+    }
+    
+    
+    # Construct portfolio dict
     portfolio = {
-        "cash": fetch_alpaca_equity(),
-        "margin_requirement": args.margin_requirement,  # Initial margin requirement
-        "margin_used": 0.0,  # total margin usage across all short positions
-        "positions": {
-            ticker: {
-                "long": 0,  # Number of shares held long
-                "short": 0,  # Number of shares held short
-                "long_cost_basis": 0.0,  # Average cost basis for long positions
-                "short_cost_basis": 0.0,  # Average price at which shares were sold short
-                "short_margin_used": 0.0,  # Dollars of margin used for this ticker's short
-            } for ticker in tickers
-        },
+        "cash": gemini_account["buying_power"],
+        "margin_requirement": gemini_account["margin_requirement"],
+        "margin_used": manual_margin_used,
+        "positions": positions,
+        "cost_basis": cost_basis,
         "realized_gains": {
             ticker: {
-                "long": 0.0,  # Realized gains from long positions
-                "short": 0.0,  # Realized gains from short positions
+                "long": 0.0,
+                "short": 0.0,
             } for ticker in tickers
         }
     }
+    
+    # Then assign this separately
+    portfolio["remaining_position_limit"] = remaining_position_limit
+    
+    #per_symbol_limit = max(0, remaining_position_limit / len(tickers))
+    #portfolio["max_position_value"] = {
+    #    symbol: per_symbol_limit for symbol in tickers
+    #}
 
+    portfolio["max_position_value"] = {}  # remove artificial per-symbol caps
+    
+    print("\n📊 RISK-CHECKED MAX SHARES PER ASSET:")
+    for symbol in tickers:
+        try:
+            price = get_gemini_price(symbol)
+            limit = portfolio["remaining_position_limit"]
+            max_shares = max(0, int(limit // price))
+            print(f"\n🧮 CALCULATING MAX SHARES for {symbol}:")
+            print(f"  ➤ price = ${price:.2f}")
+            print(f"  ➤ position limit = ${limit:.2f}")
+            print(f"  ➤ cash = ${portfolio['cash']:.2f}")
+            print(f"  ➤ margin requirement = {portfolio['margin_requirement']:.2f}")
+            print(f"  ➤ margin used = ${portfolio['margin_used']:.2f}")
+            
+            max_long_dollars = min(portfolio["cash"], limit)
+            max_short_capacity = max(0, limit)  # just use soft limit (cash or buying_power)
+            
+            max_shares_long = max(0, int(max_long_dollars // price))
+
+            raw_capacity = (limit / portfolio["margin_requirement"]) - portfolio["margin_used"]
+            print(f"🧪 DEBUG: Shorting calc for {symbol}")
+            print(f"     limit = ${limit:.2f}")
+            print(f"     margin_req = {portfolio['margin_requirement']:.2f}")
+            print(f"     margin_used = ${portfolio['margin_used']:.2f}")
+            print(f"     raw short capacity = ${raw_capacity:.2f}")
+            max_shares_short = max(0, int(max_short_capacity // price))
+            
+            print(f"  ✅ LONG: max_long_dollars = ${max_long_dollars:.2f} → max_shares = {max_shares_long}")
+            print(f"  ✅ SHORT: max_short_capacity = ${max_short_capacity:.2f} → max_shares = {max_shares_short}")
+            portfolio.setdefault("max_shares", {})[symbol] = {
+                "long": max_shares_long,
+                "short": max_shares_short,
+            }
+        except Exception as e:
+            print(f"⚠️ Failed to compute max shares for {symbol}: {e}")
+
+    # ✅ Print snapshot of holdings for confirmation
+    print("\n🔎 RAW VALUES FROM ALPACA ACCOUNT FETCH:")
+    print(f"  ➤ equity                 → {gemini_account['equity']}")
+    print(f"  ➤ maintenance_margin     → {gemini_account['margin_requirement']}")
+    print(f"  ➤ margin_used            → {gemini_account['margin_used']}")
+    print(f"  ➤ buying_power           → {gemini_account['buying_power']}")
+    print(f"  ➤ portfolio_value        → {gemini_account['portfolio_value']}")
+    print(f"  ➤ initial_margin_limit   → {initial_margin_limit:.2f}")
+    print(f"  ➤ long_market_value      → {long_market_value:.2f}")
+    print(f"  ➤ short_market_value     → {short_market_value:.2f}")
+    print(f"  ➤ current_position_value → {current_position_exposure:.2f}")
+    print(f"  ➤ remaining_position_limit → {remaining_position_limit:.2f}")
+    
+    print("\n📦 ASSIGNING TO PORTFOLIO DICT:")
+    print(f"  ➤ portfolio['cash']                = {portfolio['cash']}")
+    print(f"  ➤ portfolio['margin_requirement']  = {portfolio['margin_requirement']}")
+    print(f"  ➤ portfolio['margin_used']         = {portfolio['margin_used']}")
+    print(f"  ➤ portfolio['remaining_position_limit'] = {portfolio['remaining_position_limit']}")
+    print(f"  ➤ portfolio['cost_basis']          = {json.dumps(portfolio['cost_basis'], indent=2)}")
+    print(f"  ➤ portfolio['max_position_value']  = {json.dumps(portfolio['max_position_value'], indent=2)}")
+    
+    for symbol, pos in portfolio["positions"].items():
+        long_qty = pos["long"]
+        short_qty = pos["short"]
+        if long_qty > 0 or short_qty > 0:
+            print(f"🔹 {symbol}: ", end="")
+            if long_qty > 0:
+                print(f"Long {long_qty} @ ${pos['long_cost_basis']:.2f}", end="")
+            if short_qty > 0:
+                if long_qty > 0:
+                    print(" | ", end="")
+                print(f"Short {short_qty} @ ${pos['short_cost_basis']:.2f} (Margin Used: ${pos['short_margin_used']:.2f})", end="")
+            print()
+    
     # Run the hedge fund
+    # Allocate shares using total available funds (remaining_position_limit)
+    available_funds = portfolio["remaining_position_limit"]
+    buy_plan = {}
+    
+    print("\n🧮 ALLOCATING FUNDS ACROSS TOP-RANKED ASSETS:")
+    for symbol in tickers:
+        try:
+            price = get_gemini_price(symbol)
+            max_shares = int(available_funds // price)
+            if max_shares > 0:
+                buy_plan[symbol] = max_shares
+                used = max_shares * price
+                available_funds -= used
+                print(f"  ✅ {symbol}: max_shares={max_shares}, used=${used:.2f}, remaining=${available_funds:.2f}")
+        except Exception as e:
+            print(f"⚠️ Failed to fetch price for {symbol}: {e}")
     result = run_hedge_fund(
         tickers=tickers,
         start_date=start_date,
         end_date=end_date,
         portfolio=portfolio,
-        show_reasoning=args.show_reasoning,
         selected_analysts=selected_analysts,
         model_name=model_choice,
         model_provider=model_provider,
@@ -369,27 +474,115 @@ if __name__ == "__main__":
     # Ensure decisions are parsed
     # Ensure decisions are parsed
     decisions = result["decisions"]
+    print("\n🧪 RAW DECISIONS:")
+    for k, v in decisions.items():
+        print(f"  {k}: action={v['action']}, qty={v['quantity']}, confidence={v['confidence']:.2f}")
+    print("\n💰 ACCOUNT STATUS FROM ALPACA:")
+    print(f"  ➤ Buying Power       = ${gemini_account['buying_power']:.2f}")
+    print(f"  ➤ Equity             = ${gemini_account['equity']:.2f}")
+    print(f"  ➤ Portfolio Value    = ${gemini_account['portfolio_value']:.2f}")
+    print(f"  ➤ Margin Used        = ${gemini_account['margin_used']:.2f}")
+    print(f"  ➤ Maintenance Margin = ${gemini_account['margin_requirement']:.2f}")
+
     if isinstance(decisions, str):
         decisions = parse_hedge_fund_response(decisions)
 
     # ✅ Save Alpaca order info to JSON
-    # ✅ Save Alpaca order info to JSON
     orders_to_save = []
 
+    estimated_total_cost = 0.0
+    orders_to_save = []
+    
     if isinstance(decisions, dict):
+        # Convert decisions to a working list
+        adjusted_orders = []
         for symbol, details in decisions.items():
             action = details.get("action", "").lower()
             qty = details.get("quantity", 0)
-            print(f"🔍 Checking {symbol}: action={action}, quantity={qty}")
-
-            if action in ("buy", "sell", "short") and qty > 0:
-                orders_to_save.append({
+            if action in ("buy", "short", "sell", "cover") and qty > 0:
+                side = "buy" if action == "cover" else action
+                adjusted_orders.append({"symbol": symbol, "side": side, "qty": qty})
+    
+        # Reduce loop
+        # Fetch prices and attach confidence for buy/short orders
+        candidates = []
+        total_confidence = 0.0
+        for symbol, details in decisions.items():
+            action = details.get("action", "").lower()
+            qty = details.get("quantity", 0)
+            confidence = details.get("confidence", 0.0)
+            if action in ("buy", "short", "sell", "cover") and qty > 0:
+                try:
+                    price = get_gemini_price(symbol)
+                except Exception as e:
+                    print(f"⚠️ Price fetch failed for {symbol}: {e}")
+                    continue
+                candidates.append({
                     "symbol": symbol,
-                    "side": action,  # keep "short" as-is
-                    "qty": qty
+                    "side": "buy" if action == "cover" else action,
+                    "price": price,
+                    "confidence": confidence,
                 })
-            else:
-                print(f"⚠️ Skipped {symbol} - not a valid order (action or qty)")
+                print(f"📥 Candidate added: {symbol} → side={action} → mapped_side={'buy' if action == 'cover' else action}, price=${price:.2f}, confidence={confidence}")
+                total_confidence += confidence
+        
+        available_funds = gemini_account["buying_power"]
+        adjusted_orders = []
+        
+        if total_confidence == 0:
+            print("⚠️ Total confidence is zero; cannot allocate proportionally.")
+        else:
+            for c in candidates:
+                share_budget = available_funds * (c["confidence"] / total_confidence)
+                max_qty = int(share_budget // c["price"])
+                print(f"📊 Allocating {c['symbol']} → side={c['side']}, qty={max_qty}, share_budget=${share_budget:.2f}, price=${c['price']:.2f}")
+                if max_qty > 0:
+                    adjusted_orders.append({
+                        "symbol": c["symbol"],
+                        "side": c["side"],
+                        "qty": max_qty,
+                        "price": c["price"],
+                        "confidence": c["confidence"],
+                    })
+        
+        # Optional: print allocation debug info
+        # Reduction loop to ensure total cost fits within buying power
+        while True:
+            total_allocated = sum(o["qty"] * o["price"] for o in adjusted_orders)
+            if total_allocated <= available_funds:
+                print(f"✅ Budget fits: total_allocated=${total_allocated:.2f} within available_funds=${available_funds:.2f}")
+                break
+
+            print(f"⚠️ Budget exceeded: total_allocated=${total_allocated:.2f}, reducing quantities...")
+
+            orders_with_qty = [o for o in adjusted_orders if o["qty"] > 0]
+            if not orders_with_qty:
+                print("⚠️ All quantities zero, cannot reduce further.")
+                break
+
+            orders_with_qty.sort(key=lambda x: x["confidence"])
+
+            order_to_reduce = orders_with_qty[0]
+            order_to_reduce["qty"] -= 1
+            print(f"🔽 Reduced {order_to_reduce['symbol']} qty to {order_to_reduce['qty']} (confidence: {order_to_reduce['confidence']:.2f})")
+
+        # Final print of allocations
+        total_allocated = sum(o["qty"] * o["price"] for o in adjusted_orders)
+        print(f"🧮 Allocated orders total cost: ${total_allocated:.2f} within buying power ${available_funds:.2f}")
+
+        print(f"\n🧮 TOTAL ESTIMATED TRADE COST: ${total_allocated:,.2f}")
+        orders_to_save = []
+        for order in adjusted_orders:
+            if order["qty"] > 0:
+                print(f"  ➤ {order['symbol']} → {order['side'].upper()} {order['qty']} @ ${order['price']:.2f} = ${order['qty'] * order['price']:.2f}")
+                orders_to_save.append({
+                    "symbol": order["symbol"],
+                    "side": "buy" if order["side"] == "cover" else order["side"],
+                    "qty": order["qty"]
+                })
+                print(f"✅ FINAL ORDER → {order['symbol']} {order['side'].upper()} {order['qty']} @ ${order['price']:.2f}")
+
+
     elif isinstance(decisions, list):
         for item in decisions:
             action = item.get("action", "").lower()
@@ -397,10 +590,13 @@ if __name__ == "__main__":
             symbol = item.get("symbol", "UNKNOWN")
             print(f"🔍 Checking {symbol}: action={action}, quantity={qty}")
 
-            if action in ("buy", "sell", "short") and qty > 0:
+            if action in ("buy", "sell", "short", "cover") and qty > 0:
+                side = "buy" if action == "cover" else action
+                if action == "cover":
+                    print(f"🔁 Converted COVER to BUY for {symbol}")
                 orders_to_save.append({
                     "symbol": symbol,
-                    "side": action,  # keep "short" as-is
+                    "side": side,
                     "qty": qty
                 })
             else:
@@ -408,7 +604,10 @@ if __name__ == "__main__":
     else:
         print(f"⚠️ ERROR: Unknown format for decisions: {type(decisions)}")
 
-    with open("alpaca_order_output.json", "w") as f:
+    output_path = os.path.join(os.path.dirname(__file__), "order-data", "alpaca_order_output.json")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, "w") as f:
         json.dump(orders_to_save, f, indent=2)
 
-    print(f"\n📝 Saved {len(orders_to_save)} Alpaca orders to alpaca_order_output.json")
+    print(f"\n📝 Saved {len(orders_to_save)} Alpaca orders to {output_path}")
