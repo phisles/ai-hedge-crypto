@@ -110,11 +110,12 @@ def technical_analyst_agent(state: AgentState):
         print(f"📤 Technical Analyst output for {ticker}:\n", json.dumps(technical_analysis[ticker], indent=2, default=str))
         progress.update_status("technical_analyst_agent", ticker, "Done")
 
+    # ←— updated to stringify any non-JSON-serializable types (like bools)
     message = HumanMessage(
-        content=json.dumps(technical_analysis),
+        content=json.dumps(technical_analysis, default=str),
         name="technical_analyst_agent",
     )
-
+    
     if state["metadata"]["show_reasoning"]:
         show_agent_reasoning(technical_analysis, "Technical Analyst")
 

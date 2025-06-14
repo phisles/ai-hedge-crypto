@@ -13,6 +13,23 @@ class CharlieMungerSignal(BaseModel):
     confidence: float
     reasoning: str
 
+from typing import List
+from data.models import CompanyNews
+
+def analyze_news_sentiment(news_items: List[CompanyNews]) -> dict:
+    """
+    Aggregate the pre-computed sentiment field (via get_company_news → classify_sentiment).
+    """
+    if not news_items:
+        return {"score": 0, "details": "No news available"}
+    pos = sum(1 for n in news_items if n.sentiment == "positive")
+    neu = sum(1 for n in news_items if n.sentiment == "neutral")
+    neg = sum(1 for n in news_items if n.sentiment == "negative")
+    total = len(news_items)
+    # map (pos − neg)/total into a 0–10 scale
+    score = ((pos - neg) / total) * 5 + 5
+    details = f"{pos}/{total} positive, {neu}/{total} neutral, {neg}/{total} negative"
+    return {"score": score, "details": details}
 
 def charlie_munger_agent(state: AgentState):
     """
@@ -35,17 +52,38 @@ def charlie_munger_agent(state: AgentState):
         progress.update_status("charlie_munger_agent", ticker, "Fetching company news")
         company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
 
+        # ─── NEW: gather a few years of financial line items ───────────────────
+        progress.update_status("charlie_munger_agent", ticker, "Gathering financial line items")
+        financial_line_items = search_line_items(
+            ticker,
+            [
+                "return_on_invested_capital",
+                "gross_margin",
+                "capital_expenditure",
+                "revenue",
+                "free_cash_flow",
+                "total_debt",
+                "shareholders_equity",
+                "outstanding_shares",
+                "research_and_development",
+                "goodwill_and_intangible_assets",
+            ],
+            end_date,
+            period="annual",
+            limit=5,
+        )
+
         progress.update_status("charlie_munger_agent", ticker, "Analyzing network moat")
-        moat_analysis = analyze_moat_strength(metrics)
+        moat_analysis = analyze_moat_strength(metrics, financial_line_items)
 
         progress.update_status("charlie_munger_agent", ticker, "Analyzing community quality")
-        management_analysis = analyze_management_quality(metrics)
+        management_analysis = analyze_management_quality(financial_line_items, company_news)  # if your signature needs both
 
         progress.update_status("charlie_munger_agent", ticker, "Analyzing price predictability")
-        predictability_analysis = analyze_predictability(metrics)
+        predictability_analysis = analyze_predictability(financial_line_items)
 
         progress.update_status("charlie_munger_agent", ticker, "Calculating on-chain valuation")
-        valuation_analysis = calculate_munger_valuation(metrics)
+        valuation_analysis = calculate_munger_valuation(financial_line_items, market_cap)
 
         progress.update_status("charlie_munger_agent", ticker, "Analyzing news sentiment")
         news_sentiment = analyze_news_sentiment(company_news)
@@ -598,21 +636,6 @@ def calculate_munger_valuation(financial_line_items: list, market_cap: float) ->
     }
 
 
-def analyze_news_sentiment(news_items: list) -> dict:
-    """
-    Analyze crypto news sentiment (positive vs negative coverage).
-    """
-    if not news_items:
-        return {"score": 0, "details": "No news available"}
-    pos = sum(1 for n in news_items if n.get("sentiment") == "positive")
-    neg = sum(1 for n in news_items if n.get("sentiment") == "negative")
-    total = len(news_items)
-    # scale (pos - neg)/total to 0–10 range
-    score = ((pos - neg) / total) * 5 + 5
-    details = f"{pos}/{total} positive, {neg}/{total} negative"
-    return {"score": score, "details": details}
-
-
 def generate_munger_output(
     ticker: str,
     analysis_data: dict[str, any],
@@ -653,11 +676,11 @@ If bearish: “60-day volatility of 35% and 30% negative news indicate weak fund
 {analysis_data}
 
 Return JSON:
-{
-  "signal": "bullish/bearish/neutral",
-  "confidence": float (0–100),
-  "reasoning": "string"
-}"""
+{{  
+  "signal": "bullish/bearish/neutral",  
+  "confidence": float (0–100),  
+  "reasoning": "string"  
+}}"""
         ),
     ])
 

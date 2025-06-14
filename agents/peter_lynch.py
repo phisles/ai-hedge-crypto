@@ -18,12 +18,11 @@ from utils.llm import call_llm
 
 class PeterLynchSignal(BaseModel):
     """
-    Container for the Peter Lynch-style output signal.
+    Container for the Peter Lynch–style output signal.
     """
     signal: Literal["bullish", "bearish", "neutral"]
     confidence: float
     reasoning: str
-
 
 def peter_lynch_agent(state: AgentState):
     """
@@ -51,18 +50,14 @@ def peter_lynch_agent(state: AgentState):
             dev_stars = latest.get("developer_stars", 0)
 
             score = 0
-            # 30-day momentum
             if price_30d > 0.20:
                 score += 2
             elif price_30d > 0.05:
                 score += 1
-            # community sentiment
             if sentiment_data["score"] >= 7:
                 score += 1
-            # on-chain usage
             if vol_mc > 0.03:
                 score += 1
-            # developer interest
             if dev_stars > 30000:
                 score += 1
 
@@ -91,7 +86,7 @@ def peter_lynch_agent(state: AgentState):
             continue
         # —— END CRYPTO BRANCH —— 
 
-        # —— STOCK PATH (unchanged) —— 
+        # —— STOCK PATH —— 
         progress.update_status("peter_lynch_agent", ticker, "Gathering financial line items")
         financial_line_items = search_line_items(
             ticker,
@@ -129,11 +124,10 @@ def peter_lynch_agent(state: AgentState):
         growth_analysis       = analyze_lynch_growth(financial_line_items)
         fundamentals_analysis = analyze_lynch_fundamentals(financial_line_items)
         valuation_analysis    = analyze_lynch_valuation(financial_line_items, market_cap)
-        from collections import Counter
 
+        from collections import Counter
         sentiment_counts = Counter(n.sentiment for n in company_news if n.sentiment)
         total_articles = sum(sentiment_counts.values())
-
         sentiment_analysis = {
             "positive": sentiment_counts.get("positive", 0),
             "neutral": sentiment_counts.get("neutral", 0),
@@ -143,9 +137,11 @@ def peter_lynch_agent(state: AgentState):
                 (sentiment_counts.get("positive", 0) - sentiment_counts.get("negative", 0)) / total_articles
                 if total_articles > 0 else 0
             ),
-            "summary": f"{sentiment_counts.get('positive', 0)}↑ / {sentiment_counts.get('neutral', 0)}→ / {sentiment_counts.get('negative', 0)}↓"
+            "summary": f"{sentiment_counts.get('positive', 0)}↑ / "
+                       f"{sentiment_counts.get('neutral', 0)}→ / "
+                       f"{sentiment_counts.get('negative', 0)}↓"
         }
-        insider_activity      = analyze_insider_activity(insider_trades)
+        insider_activity = analyze_insider_activity(insider_trades)
 
         total_score = (
             growth_analysis["score"] * 0.30
@@ -163,29 +159,41 @@ def peter_lynch_agent(state: AgentState):
         else:
             signal = "neutral"
 
+        lynch_output = generate_lynch_output(
+            ticker=ticker,
+            analysis_data={
+                "growth": growth_analysis,
+                "valuation": valuation_analysis,
+                "fundamentals": fundamentals_analysis,
+                "sentiment": sentiment_analysis,
+                "insider": insider_activity,
+            },
+            model_name=state["metadata"]["model_name"],
+            model_provider=state["metadata"]["model_provider"],
+        )
         lynch_analysis[ticker] = {
             "signal": signal,
             "confidence": round(total_score / max_possible_score * 100),
-            "reasoning": lynch_output.reasoning if (lynch_output := generate_lynch_output(
-                ticker=ticker,
-                analysis_data={
-                    "growth": growth_analysis,
-                    "valuation": valuation_analysis,
-                    "fundamentals": fundamentals_analysis,
-                    "sentiment": sentiment_analysis,
-                    "insider": insider_activity,
-                },
-                model_name=state["metadata"]["model_name"],
-                model_provider=state["metadata"]["model_provider"],
-            )) else ""
+            "reasoning": lynch_output.reasoning
         }
         progress.update_status("peter_lynch_agent", ticker, "Done")
 
     if state["metadata"].get("show_reasoning"):
         show_agent_reasoning(lynch_analysis, "Peter Lynch Agent")
 
+    # store into state
     state["data"]["analyst_signals"]["peter_lynch_agent"] = lynch_analysis
-    return {"messages": [HumanMessage(json.dumps(lynch_analysis), "peter_lynch_agent")], "data": state["data"]}
+
+    # <— FIXED HERE:
+    return {
+        "messages": [
+            HumanMessage(
+                content=json.dumps(lynch_analysis),
+                name="peter_lynch_agent"
+            )
+        ],
+        "data": state["data"]
+    }
 
 
 def analyze_lynch_growth(financial_line_items: list) -> dict:
