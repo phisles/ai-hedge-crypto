@@ -65,10 +65,13 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
             dev_stars = latest.get("developer_stars", 0)
 
             score = 0
-            if pct1y > 0.50:        score += 2
-            elif pct1y > 0.20:      score += 1
-            if sentiment > 60:      score += 1
-            if dev_stars > 20000:   score += 1
+            if pct1y is not None:
+                if pct1y > 0.50:        score += 2
+                elif pct1y > 0.20:      score += 1
+            if sentiment is not None and sentiment > 60:      
+                score += 1
+            if dev_stars is not None and dev_stars > 20000:  
+                score += 1
 
             if score >= 3:
                 sig = "bullish"

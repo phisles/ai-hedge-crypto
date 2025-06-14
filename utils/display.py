@@ -276,36 +276,25 @@ def print_backtest_results(table_rows: list) -> None:
     print("\n" * 2)
 
     # Print the table with just ticker rows
-    print(
-        tabulate(
-            ticker_rows,
-            headers=[
-                "Date",
-                "Ticker",
-                "Action",
-                "Quantity",
-                "Price",
-                "Shares",
-                "Position Value",
-                "Bullish",
-                "Bearish",
-                "Neutral",
-            ],
-            tablefmt="grid",
-            colalign=(
-                "left",  # Date
-                "left",  # Ticker
-                "center",  # Action
-                "right",  # Quantity
-                "right",  # Price
-                "right",  # Shares
-                "right",  # Position Value
-                "right",  # Bullish
-                "right",  # Bearish
-                "right",  # Neutral
-            ),
-        )
-    )
+    headers = [
+        "Date",
+        "Ticker",
+        "Action",
+        "Quantity",
+        "Price",
+        "Shares",
+        "Position Value",
+        "Bullish",
+        "Bearish",
+        "Neutral",
+    ]
+
+    colalign = ("left", "left", "center", "right", "right", "right", "right", "right", "right", "right")
+
+    if ticker_rows and all(len(row) == len(headers) for row in ticker_rows):
+        print(tabulate(ticker_rows, headers=headers, tablefmt="grid", colalign=colalign))
+    elif ticker_rows:
+        print(tabulate(ticker_rows, headers=headers, tablefmt="grid"))
 
     # Add vertical spacing
     print("\n" * 4)

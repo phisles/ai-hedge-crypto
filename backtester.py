@@ -1,5 +1,8 @@
 import sys
 
+from tools.api import COINGECKO_IDS
+tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
+
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import questionary
@@ -10,6 +13,7 @@ from colorama import Fore, Style, init
 import numpy as np
 import itertools
 from tools.api import get_historical_metrics  # ← already imported but underused
+
 
 from llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from utils.analysts import ANALYST_ORDER
@@ -34,8 +38,10 @@ import requests
 load_dotenv()
 
 def fetch_alpaca_equity():
-    api_key = os.getenv("APCA_API_KEY_ID")
-    api_secret_key = os.getenv("APCA_API_SECRET_KEY")
+    from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
+
+    api_key = APCA_API_KEY_ID
+    api_secret_key = APCA_API_SECRET_KEY
     base_url = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
     if not api_key or not api_secret_key:
@@ -306,16 +312,16 @@ class Backtester:
         print("\nPre-fetching data for the entire backtest period...")
 
         # Convert end_date string to datetime, fetch up to 1 year before
-        end_date_dt = datetime.strptime(self.end_date, "%Y-%m-%d")
-        start_date_dt = end_date_dt - relativedelta(years=1)
-        start_date_str = start_date_dt.strftime("%Y-%m-%d")
+        start_date_dt = datetime.strptime(self.start_date, "%Y-%m-%d")
+        lookback_start_dt = start_date_dt - relativedelta(years=1)
+        start_date_str = lookback_start_dt.strftime("%Y-%m-%d")
 
         for ticker in self.tickers:
             get_prices(ticker, start_date_str, self.end_date)
             get_historical_metrics(ticker, self.end_date)
             get_financial_metrics(ticker, self.end_date)  # ← ✅ add this
-            get_insider_trades(ticker, self.end_date, start_date=self.start_date, limit=1000)
-            get_company_news(ticker, self.end_date, start_date=self.start_date, limit=1000)
+            get_insider_trades(ticker, self.end_date, start_date=self.start_date, limit=10)
+            get_company_news(ticker, self.end_date, start_date=self.start_date, limit=10)
 
         print("Data pre-fetch complete.")
 
@@ -388,7 +394,17 @@ class Backtester:
                 # If there's a general API error, log it and skip this day
                 print(f"Error fetching prices for {current_date_str}: {e}")
                 continue
-
+            # Risk-check max shares for all tickers using Gemini price
+            print("\n📊 RISK-CHECKED MAX SHARES PER ASSET:")
+            for symbol in self.tickers:
+                try:
+                    from tools.api import get_gemini_price
+                    price = get_gemini_price(symbol)
+                    max_shares = round(self.portfolio["remaining_position_limit"] / price, 8)
+                    print(f"  ✅ {symbol}: max_shares={max_shares}")
+                    self.portfolio.setdefault("max_shares", {})[symbol] = max_shares
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch price for {symbol}: {e}")
             # ---------------------------------------------------------------
             # 1) Execute the agent's trades
             # ---------------------------------------------------------------
@@ -717,7 +733,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
-    tickers = [ticker.strip() for ticker in args.tickers.split(",")] if args.tickers else []
+    #tickers = [ticker.strip() for ticker in args.tickers.split(",")] if args.tickers else []
 
     # Choose analysts
     selected_analysts = None
@@ -805,8 +821,8 @@ if __name__ == "__main__":
     backtester = Backtester(
         agent=run_hedge_fund,
         tickers=tickers,
-        start_date=args.start_date,
-        end_date=args.end_date,
+        start_date="2025-06-06",
+        end_date="2025-06-13",
         initial_capital=fetch_alpaca_equity(),
         model_name=model_choice,
         model_provider=model_provider,

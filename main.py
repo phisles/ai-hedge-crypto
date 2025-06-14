@@ -126,6 +126,7 @@ def run_hedge_fund(
                     "start_date": start_date,
                     "end_date": end_date,
                     "analyst_signals": {},
+                    "max_shares": portfolio.get("max_shares", {}),  # ✅ required for risk_management_agent
                 },
                 "metadata": {
                     "show_reasoning": show_reasoning,
