@@ -103,7 +103,7 @@ def fetch_with_retry(url, max_retries=20):
                 pp = pprint.PrettyPrinter(indent=2)
                 try:
                     data = response.json()
-                    print("\n🌐 CoinGecko API response:")
+                    #print("\n🌐 CoinGecko API response:")
                     #pp.pprint(data)
                     return data
                 except Exception as e:
@@ -169,7 +169,7 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
 
         period_start = period_end + datetime.timedelta(days=1)
 
-    print(f"📊 Parsed {len(all_candles)} candles from Gemini for {symbol}")
+    #print(f"📊 Parsed {len(all_candles)} candles from Gemini for {symbol}")
     _cache.set_prices(ticker, start_date, end_date, [p.model_dump() for p in all_candles])
     return all_candles
 
@@ -780,7 +780,7 @@ def get_company_news(ticker: str, end_date: str, start_date: str | None = None, 
                 return filtered_data
 
         # If not cached, fetch
-        print(f"📡 Requesting Alpaca news for {symbol}...")
+        #print(f"📡 Requesting Alpaca news for {symbol}...")
 
         headers = {
             "accept": "application/json",
@@ -809,7 +809,7 @@ def get_company_news(ticker: str, end_date: str, start_date: str | None = None, 
 
         data = response.json()
         articles = data.get("news", [])
-        print(f"📄 Retrieved {len(articles)} news articles from Alpaca")
+        #print(f"📄 Retrieved {len(articles)} news articles from Alpaca")
 
         news_items = []
         for a in articles:
