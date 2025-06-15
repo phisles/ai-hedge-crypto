@@ -1,3 +1,11 @@
+import sys
+import types
+
+sys.path.append("/root/stock2")
+import config
+
+sys.modules["config2"] = config
+
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
@@ -30,13 +38,7 @@ sys.path.append("/root/stock2")
 
 from tools.api import COINGECKO_IDS
 
-import sys
-import types
 
-sys.path.append("/root/stock2")
-import config
-
-sys.modules["config2"] = config
 
 init(autoreset=True)
 TESTING_MODE = False  # Set to False in production
