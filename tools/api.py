@@ -594,7 +594,7 @@ def search_line_items(
 
 def get_historical_metrics(ticker: str, end_date: str) -> dict:
     if cached := _cache.get_historical_metrics(ticker, end_date):
-        print(f"📦 Loaded cached historical metrics for {ticker}")
+        #print(f"📦 Loaded cached historical metrics for {ticker}")
         return cached
 
     from time import sleep
@@ -630,7 +630,7 @@ def get_historical_metrics(ticker: str, end_date: str) -> dict:
 def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[InsiderTrade]:
     ticker = ticker.upper()
     if cached := _cache.get_insider_trades(ticker, end_date):
-        print(f"📦 Loaded cached insider trades for {ticker}")
+        #print(f"📦 Loaded cached insider trades for {ticker}")
         return [InsiderTrade(**item) for item in cached]
 
     if ticker != "BTC/USD":
@@ -697,7 +697,7 @@ _in_progress = {}
 def get_cached_coingecko_data(asset_id: str) -> dict | None:
     key = f"coingecko:{asset_id}"
     if cached := _cache.get_cached_data(key):
-        print(f"📦 Loaded cached CoinGecko data for {asset_id}")
+        #print(f"📦 Loaded cached CoinGecko data for {asset_id}")
         return cached
 
     # prevent duplicate simultaneous fetches
@@ -776,7 +776,7 @@ def get_company_news(ticker: str, end_date: str, start_date: str | None = None, 
             ]
             filtered_data.sort(key=lambda x: x.date, reverse=True)
             if filtered_data:
-                print(f"📦 Loaded cached news for {symbol}: {len(filtered_data)} articles")
+                #print(f"📦 Loaded cached news for {symbol}: {len(filtered_data)} articles")
                 return filtered_data
 
         # If not cached, fetch
