@@ -135,7 +135,7 @@ def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
     """Fetch historical daily close prices from Gemini API in year-sized chunks."""
 
     if cached := _cache.get_prices(ticker, start_date, end_date):
-        print(f"📦 Loaded cached prices for {ticker} ({start_date} → {end_date}): {len(cached)} entries")
+        #print(f"📦 Loaded cached prices for {ticker} ({start_date} → {end_date}): {len(cached)} entries")
         return [Price(**item) for item in cached]
 
     import datetime
@@ -179,7 +179,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     """Return crypto-adapted financial metrics for a given CoinGecko asset ID (e.g., 'bitcoin')."""
     # ─── Check cache ──────────────────────────────────────────────────────────────
     if cached := cache.get_financial_metrics(ticker, end_date):
-        print(f"📦 Loaded cached financial metrics for {ticker}")
+        #print(f"📦 Loaded cached financial metrics for {ticker}")
         return cached
 
     import requests
@@ -834,7 +834,7 @@ def get_company_news(ticker: str, end_date: str, start_date: str | None = None, 
 
 def get_market_cap(ticker: str, end_date: str) -> float | None:
     if cached := _cache.get_market_cap(ticker, end_date):
-        print(f"📦 Loaded cached market cap for {ticker}")
+        #print(f"📦 Loaded cached market cap for {ticker}")
         return cached
 
     base = ticker.upper().replace("/USD", "").replace("-USD", "")
