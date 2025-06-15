@@ -134,8 +134,8 @@ def generate_trading_decision(
 
             Decision Rules:
             - Prioritize BUY if:
-                * At least 2 agents are BULLISH for a ticker, and
-                * Combined bullish confidence is > 140
+                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 2 bullish signals
+                * Divide available cash across all qualified tickers, based on relative confidence score
             - HOLD is appropriate if signals are mixed or neutral overall
             - SELL only if:
                 * You hold shares and majority of signals are clearly BEARISH
@@ -165,6 +165,8 @@ def generate_trading_decision(
               Portfolio Cash: {portfolio_cash}
               Current Positions: {portfolio_positions}
 
+              Relative Confidence Scores: {relative_confidence}
+
               Output strictly in JSON with the following structure:
               {{
                 "decisions": {{
@@ -186,6 +188,13 @@ def generate_trading_decision(
     )
 
     # Generate the prompt
+    # Generate the prompt
+    relative_confidence = {
+        ticker: sum(s["confidence"] for s in signals.values() if s["signal"] == "bullish")
+        for ticker, signals in signals_by_ticker.items()
+        if sum(1 for s in signals.values() if s["signal"] == "bullish") >= 2
+    }
+
     prompt = template.invoke(
         {
             "signals_by_ticker": json.dumps(signals_by_ticker, indent=2),
@@ -195,6 +204,7 @@ def generate_trading_decision(
             "portfolio_positions": json.dumps(
                 {k: v["long"] for k, v in portfolio.get("positions", {}).items() if v["long"] > 0}, indent=2
             ),
+            "relative_confidence": json.dumps(relative_confidence, indent=2),
         }
     )
 
