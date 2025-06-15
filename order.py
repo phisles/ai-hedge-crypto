@@ -8,10 +8,10 @@ sys.path.append("/root/stock2")
 from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ORDER_FILE = os.path.join(SCRIPT_DIR, "order-data", "alpaca_order_output.json")
-CSV_LOG = os.path.join(SCRIPT_DIR, "order-data", "alpaca_order_log.csv")
+ORDER_FILE = os.path.join(SCRIPT_DIR, "order-data", "alpaca_crypto_order_output.json")
+CSV_LOG = os.path.join(SCRIPT_DIR, "order-data", "alpaca_order_log_crypto.csv")
 
-TESTING_MODE = False  # Set to False in production
+TESTING_MODE = True  # Set to False in production
 
 # Create CSV with headers if it doesn't exist yet
 os.makedirs(os.path.dirname(CSV_LOG), exist_ok=True)
@@ -56,21 +56,36 @@ def get_current_position(symbol):
         return 0
 
 def get_limit_price(symbol, side):
-    url = f"https://data.alpaca.markets/v2/stocks/quotes/latest?symbols={symbol}&feed=iex"
+    url = f"https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes?symbols={symbol}"
+    print(f"\n🌐 Fetching quote for {symbol}")
+    print(f"🔗 URL: {url}")
+
     try:
         r = requests.get(url, headers=headers)
+        print(f"📬 Status Code: {r.status_code}")
+        print(f"📦 Response: {r.text}")
+
         r.raise_for_status()
-        quote = r.json().get("quotes", {}).get(symbol.upper(), {})
+
+        data = r.json()
+        quote = data.get("quotes", {}).get(symbol)
+
+        if not quote:
+            raise ValueError(f"No quote data found for {symbol}")
+
         ask = quote.get("ap")
         bid = quote.get("bp")
 
         if side in ("buy", "cover"):
-            return round(ask, 2) if ask else None
+            print(f"✅ Ask: {ask}")
+            return round(ask, 4) if ask else None
         else:
-            return round(bid, 2) if bid else None
+            print(f"✅ Bid: {bid}")
+            return round(bid, 4) if bid else None
+
     except Exception as e:
         print(f"❌ Failed to fetch quote for {symbol}: {e}")
-    return None
+        return None
 
 def submit_order(symbol, qty, side):
     alpaca_side = "buy" if side in ("buy", "cover") else "sell"
@@ -112,7 +127,7 @@ def submit_order(symbol, qty, side):
         "side": alpaca_side,
         "type": "limit",
         "limit_price": limit_price,
-        "time_in_force": "day"
+        "time_in_force": "gtc"
     }
 
     try:
@@ -199,6 +214,17 @@ def determine_order_type(order):
 
 def main():
     print_current_holdings()
+
+    # Auto-cancel all open orders before submitting new ones
+    print("🚫 Auto-canceling all open Alpaca orders...")
+    try:
+        cancel_resp = requests.delete(f"{BASE_URL}/v2/orders", headers=headers)
+        cancel_resp.raise_for_status()
+        print("✅ All open orders cancelled.")
+        print(cancel_resp.text)
+    except Exception as e:
+        print(f"❌ Failed to cancel open orders: {e}")
+        return
 
     if not os.path.exists(ORDER_FILE):
         print(f"❌ Order file not found: {ORDER_FILE}")

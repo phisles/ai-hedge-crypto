@@ -1,0 +1,12 @@
+[
+  {
+    "symbol": "AVAX/USD",
+    "side": "buy",
+    "qty": 3.67925803
+  },
+  {
+    "symbol": "BTC/USD",
+    "side": "sell",
+    "qty": 0.000089423
+  }
+]

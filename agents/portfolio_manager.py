@@ -131,7 +131,7 @@ def generate_trading_decision(
               - "buy": Open or add to long position
               - "sell": Close or reduce long position
               - "hold": No action
-              
+
             Decision Rules:
             - Prioritize BUY if:
                 * At least 2 agents are BULLISH for a ticker, and
@@ -192,7 +192,9 @@ def generate_trading_decision(
             "current_prices": json.dumps(current_prices, indent=2),
             "max_shares": json.dumps({t: {"long": max_shares[t]["long"]} for t in tickers}, indent=2),
             "portfolio_cash": f"{portfolio.get('cash', 0):.2f}",
-            "portfolio_positions": json.dumps(portfolio.get('positions', {}), indent=2),
+            "portfolio_positions": json.dumps(
+                {k: v["long"] for k, v in portfolio.get("positions", {}).items() if v["long"] > 0}, indent=2
+            ),
         }
     )
 
