@@ -631,7 +631,7 @@ def get_insider_trades(ticker: str, end_date: str, start_date: str | None = None
     ticker = ticker.upper()
     if cached := _cache.get_insider_trades(ticker, end_date):
         #print(f"📦 Loaded cached insider trades for {ticker}")
-        return [InsiderTrade(**item) for item in cached]
+        return [InsiderTrade(**item) for item in cached if "ticker" in item and "transaction_date" in item]
 
     if ticker != "BTC/USD":
         print(f"ℹ️ Insider trades only available for BTC. Returning empty list for {ticker}")
