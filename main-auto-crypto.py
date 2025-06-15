@@ -3,8 +3,10 @@ import types
 
 sys.path.append("/root/stock2")
 import config
-
 sys.modules["config2"] = config
+
+# Explicitly import sandbox keys
+from config import SAPCA_API_KEY_ID, SAPCA_API_SECRET_KEY, SAPCA_API_BASE_URL
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
