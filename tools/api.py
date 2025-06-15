@@ -541,7 +541,7 @@ def search_line_items(
         gemini_symbol = ticker.lower().replace("/", "").replace("-", "")
         ticker_url = f"https://api.gemini.com/v1/pubticker/{gemini_symbol}"
 
-        print(f"🌐 Fetching Gemini pubticker from {ticker_url}...")
+        #print(f"🌐 Fetching Gemini pubticker from {ticker_url}...")
         try:
             ticker_resp = requests.get(ticker_url, timeout=10)
         except requests.exceptions.RequestException as e:
