@@ -134,7 +134,7 @@ def generate_trading_decision(
 
             Decision Rules:
             - Prioritize BUY if:
-                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 2 bullish signals
+                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 3 bullish signals
                 * Divide available cash across all qualified tickers, based on relative confidence score
             - HOLD is appropriate if signals are mixed or neutral overall
             - SELL only if:
