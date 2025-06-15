@@ -85,15 +85,19 @@ def peter_lynch_agent(state: AgentState):
 
             # -- Scoring (same base logic)
             score = 0
-            if price_30d > 0.20:
-                score += 2
-            elif price_30d > 0.05:
+            if price_30d is not None:
+                if price_30d > 0.20:
+                    score += 2
+                elif price_30d > 0.05:
+                    score += 1
+
+            if sentiment_data.get("score") is not None and sentiment_data["score"] >= 7:
                 score += 1
-            if sentiment_data["score"] >= 7:
+
+            if vol_mc is not None and vol_mc > 0.03:
                 score += 1
-            if vol_mc > 0.03:
-                score += 1
-            if dev_stars > 30000:
+
+            if dev_stars is not None and dev_stars > 30000:
                 score += 1
 
             if score >= 4:

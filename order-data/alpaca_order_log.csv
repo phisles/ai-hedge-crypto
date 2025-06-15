@@ -1,6 +1,0 @@
-symbol,json_side,qty,alpaca_side,limit_price,order_id,status,created_at
-AAPL,buy,2,buy,196.98,4e48c267-bc8c-4e18-9c04-b65c6f92a743,accepted,2025-04-18T14:19:41.631515419Z
-MSFT,short,1,sell,367.6,3541bd3f-3352-424d-af21-94e4dd2d62bd,accepted,2025-04-18T14:19:42.134700983Z
-NVDA,buy,3,buy,102.2,682558db-1696-456f-9bf8-02c3b6149178,accepted,2025-04-18T14:19:42.554755094Z
-GOOGL,short,2,sell,151.16,8d5c4766-e981-4f32-90d8-eece6bbf4b24,accepted,2025-04-18T14:19:42.994439013Z
-TSLA,short,1,sell,239,9ac0feb5-bf67-4ce6-b261-f9298d6af9e7,accepted,2025-04-18T14:19:43.45254414Z

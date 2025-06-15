@@ -36,6 +36,8 @@ COINGECKO_HEADERS = {
     "x-cg-demo-api-key": "CG-SohCK1ePBmQxyUdm29dSFWTA"
 }
 
+"""
+#GEMINI PAIRS
 COINGECKO_IDS = {
     "AAVE": "aave",
     "APE": "apecoin",
@@ -53,7 +55,7 @@ COINGECKO_IDS = {
     "LINK": "chainlink",
     "LTC": "litecoin",
     "MANA": "decentraland",
-    "MATIC": "polygon",
+    "MATIC": "matic-network",
     "MKR": "maker",
     "QNT": "quant-network",
     "SAND": "the-sandbox",
@@ -65,6 +67,28 @@ COINGECKO_IDS = {
     "XTZ": "tezos",
     "YFI": "yearn-finance",
     "ZEC": "zcash",
+}
+"""
+#ALPACA PAIRS
+COINGECKO_IDS = {
+    "AAVE": "aave",
+    "AVAX": "avalanche-2",
+    "BAT": "basic-attention-token",
+    "BCH": "bitcoin-cash",
+    "BTC": "bitcoin",
+    "CRV": "curve-dao-token",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "ETH": "ethereum",
+    "GRT": "the-graph",
+    "LINK": "chainlink",
+    "LTC": "litecoin",
+    "MKR": "maker",
+    "SHIB": "shiba-inu",
+    "SUSHI": "sushi",
+    "UNI": "uniswap",
+    "XTZ": "tezos",
+    "YFI": "yearn-finance",
 }
 
 # Global cache instance
@@ -498,7 +522,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
 
     _cache.set_financial_metrics(ticker, end_date, metrics)
     
-    pprint.pprint(metrics[0], sort_dicts=False)
+    #pprint.pprint(metrics[0], sort_dicts=False)
     return metrics
 
 def search_line_items(
@@ -696,10 +720,24 @@ def get_cached_coingecko_data(asset_id: str) -> dict | None:
     finally:
         del _in_progress[asset_id]
 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from openai import OpenAI, APITimeoutError
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(APITimeoutError),
+)
+def _safe_classify_sentiment(client, prompt):
+    return client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+    )
+
 def classify_sentiment(text: str) -> str:
     """Use OpenAI Chat API to classify sentiment as 'positive', 'neutral', or 'negative'."""
     from config2 import OPENAI_API_KEY
-    from openai import OpenAI
 
     client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -709,14 +747,13 @@ def classify_sentiment(text: str) -> str:
         f"Text:\n{text.strip()}"
     )
 
-    response = client.chat.completions.create(
-        model="gpt-4o",  # or "gpt-3.5-turbo"
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-
-    sentiment = response.choices[0].message.content.strip().lower()
-    return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
+    try:
+        response = _safe_classify_sentiment(client, prompt)
+        sentiment = response.choices[0].message.content.strip().lower()
+        return sentiment if sentiment in {"positive", "neutral", "negative"} else "neutral"
+    except Exception as e:
+        print(f"⚠️ classify_sentiment failed: {e}")
+        return "neutral"
 
 def get_company_news(ticker: str, end_date: str, start_date: str | None = None, limit: int = 10) -> list[CompanyNews]:
     """Fetch company news using Alpaca API with cache and per-ticker locking."""

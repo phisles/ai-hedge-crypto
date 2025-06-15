@@ -255,7 +255,7 @@ def analyze_financial_discipline(metrics: list[dict], financial_line_items: list
     # latest metrics is a dict
     latest = metrics[0]
     # DEBUG: show what keys we actually have
-    print("🔍 Latest metrics keys:", list(latest.keys()))
+    #print("🔍 Latest metrics keys:", list(latest.keys()))
 
     # 1) Inflation control: circulating_supply / total_supply
     circ = latest.get("circulating_supply")

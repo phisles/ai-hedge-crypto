@@ -27,12 +27,13 @@ load_dotenv()
 sys.path.append("/root/stock2")
 
 from config2 import GEM_API_KEY, GEM_API_SECRET  # Use your Gemini keys
+from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
 from tools.api import COINGECKO_IDS
 
 init(autoreset=True)
 TESTING_MODE = False  # Set to False in production
 
-
+"""
 def get_gemini_portfolio():
     url = "https://api.gemini.com/v1/notionalbalances/usd"
     payload = {
@@ -63,7 +64,41 @@ def get_gemini_portfolio():
     ]
 
     return {"total_balance": total_value, "assets": assets}
+"""
 
+# NEW ALPACA PORTFOLIO FETCH
+def get_alpaca_portfolio():
+    headers = {
+        "APCA-API-KEY-ID": APCA_API_KEY_ID,
+        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY,
+    }
+
+    # Fetch account summary
+    account_resp = requests.get("https://paper-api.alpaca.markets/v2/account", headers=headers)
+    account_resp.raise_for_status()
+    account = account_resp.json()
+
+    # Fetch held positions
+    positions_resp = requests.get("https://paper-api.alpaca.markets/v2/positions", headers=headers)
+    positions_resp.raise_for_status()
+    positions_raw = positions_resp.json()
+
+    total_balance = float(account["portfolio_value"])
+    cash = float(account["cash"])
+
+    positions = {
+        f'{p["symbol"].upper()}/USD': float(p["qty"])
+        for p in positions_raw if float(p["qty"]) > 0
+    }
+
+    return {"total_balance": total_balance, "cash": cash, "positions": positions}
+
+
+# REPLACE GEMINI CALL WITH:
+portfolio_data = get_alpaca_portfolio()
+total_value = portfolio_data["total_balance"]
+cash = portfolio_data["cash"]
+positions = portfolio_data["positions"]
 
 def get_gemini_price(symbol):
     pair = symbol.replace("/", "").lower()
@@ -175,37 +210,11 @@ if __name__ == "__main__":
     tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
     
     
-    #LIVE
-    from utils.analysts import ANALYST_CONFIG
-
-    selected_analysts = [
-        key for key, _ in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
-]
-    
-    #TEST
-    #selected_analysts = ["ben_graham"]
-
-    model_choice = "gpt-4.1-nano"
-    model_info = get_model_info(model_choice)
-    model_provider = model_info.provider.value
-    show_reasoning = False
-
-    # Date range
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=7)).strftime("%Y-%m-%d")
-
-    # Fetch Gemini portfolio once
-    portfolio_data = get_gemini_portfolio()
-    assets = portfolio_data.get("assets", [])
-    total_value = portfolio_data.get("total_balance", 0.0)
-    cash = next((item["amountNotional"] for item in assets if item["currency"] == "USD"), 0.0)
-
-    # Build positions dict (long only)
-    positions = {
-        f"{item['currency'].upper()}/USD": item["available"]
-        for item in assets
-        if item["currency"].upper() != "USD" and item["available"] > 0
-    }
+    # REPLACE GEMINI CALL WITH:
+    portfolio_data = get_alpaca_portfolio()
+    total_value = portfolio_data["total_balance"]
+    cash = portfolio_data["cash"]
+    positions = portfolio_data["positions"]
 
     # Construct portfolio
     portfolio = {
@@ -216,6 +225,36 @@ if __name__ == "__main__":
         "remaining_position_limit": cash,
         "max_position_value": {}
     }
+    #LIVE
+    from utils.analysts import ANALYST_CONFIG
+
+    selected_analysts = [
+        key for key, _ in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
+]
+    
+    #TEST
+    #selected_analysts = ["ben_graham"]
+
+    #model_choice = "gpt-4o"
+    model_choice = "gpt-4.1-nano"
+    model_info = get_model_info(model_choice)
+    model_provider = model_info.provider.value
+    show_reasoning = False
+
+    # Date range
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.strptime(end_date, "%Y-%m-%d") - relativedelta(months=7)).strftime("%Y-%m-%d")
+
+    # OLD GEMINI LOGIC (DISABLED FOR NOW)
+    # portfolio_data = get_gemini_portfolio()
+    # assets = portfolio_data.get("assets", [])
+    # total_value = portfolio_data.get("total_balance", 0.0)
+    # cash = next((item["amountNotional"] for item in assets if item["currency"] == "USD"), 0.0)
+    # positions = {
+    #     f"{item['currency'].upper()}/USD": item["available"]
+    #     for item in assets
+    #     if item["currency"].upper() != "USD" and item["available"] > 0
+    # }
 
     # Display summary
     print(f"📥 Total Portfolio Value: ${total_value:.2f}")
@@ -281,14 +320,18 @@ if __name__ == "__main__":
         if total_confidence == 0:
             print("⚠️ Total confidence zero; skipping allocation.")
         else:
-            available = cash
+            #TEST
+            allocation_fraction = 0.80  # ← use 80% of available cash
+            #USE BUDGET ALLOCATION PERCENT IN LIVE
+            allocation_fraction = 0.80  # leave 20% cash for future days
+            available = cash * allocation_fraction
             adjusted = []
+
             for c in candidates:
                 budget = available * (c["confidence"] / total_confidence)
-                qty = int(budget // c["price"])
-                if qty > 0:
+                qty = round(budget / c["price"], 8)
+                if qty >= 0.00000001:
                     adjusted.append({"symbol": c["symbol"], "side": c["side"], "qty": qty, "price": c["price"]})
-                    print(f"📊 Allocating {c['symbol']} qty={qty} budget=${budget:.2f}")
             while sum(o["qty"] * o["price"] for o in adjusted) > cash:
                 adjusted.sort(key=lambda x: x["qty"])
                 adj = adjusted[0]
@@ -307,7 +350,7 @@ if __name__ == "__main__":
                 orders_to_save.append({"symbol": symbol, "side": action, "qty": qty})
 
     # Save orders to file
-    output_path = os.path.join(os.path.dirname(__file__), "order-data", "gemini_order_output.json")
+    output_path = os.path.join(os.path.dirname(__file__), "order-data", "alpaca_crypto_order_output.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(orders_to_save, f, indent=2)

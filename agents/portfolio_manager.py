@@ -131,6 +131,15 @@ def generate_trading_decision(
               - "buy": Open or add to long position
               - "sell": Close or reduce long position
               - "hold": No action
+              
+            Decision Rules:
+            - Prioritize BUY if:
+                * At least 2 agents are BULLISH for a ticker, and
+                * Combined bullish confidence is > 140
+            - HOLD is appropriate if signals are mixed or neutral overall
+            - SELL only if:
+                * You hold shares and majority of signals are clearly BEARISH
+            - Aim to act on high-confidence signals from agents like "Phil Fisher", "Michael Burry", or "Peter Lynch"
 
               Inputs:
               - signals_by_ticker: dictionary of ticker → signals
