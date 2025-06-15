@@ -335,9 +335,9 @@ if __name__ == "__main__":
             print("⚠️ Total confidence zero; skipping allocation.")
         else:
             #TEST
-            allocation_fraction = 0.80  # ← use 80% of available cash
+            allocation_fraction = 0.15  # ← use 80% of available cash
             #USE BUDGET ALLOCATION PERCENT IN LIVE
-            allocation_fraction = 0.80  # leave 20% cash for future days
+            #allocation_fraction = 0.10  # leave 20% cash for future days
             available = cash * allocation_fraction
             adjusted = []
 
