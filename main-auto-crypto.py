@@ -138,7 +138,7 @@ def run_hedge_fund(
     portfolio: dict,
     show_reasoning: bool = False,
     selected_analysts: list[str] = [],
-    model_name: str = "gpt-4.1-nano",
+    model_name: str = "o4-mini-2025-04-16",
     model_provider: str = "OpenAI",
 ):
     progress.start()
@@ -249,8 +249,8 @@ if __name__ == "__main__":
 
     #model_choice = "gpt-4o"
     #find GPT-4o mini
-    model_choice = "gpt-4.1-nano"
-    #model_choice = "gpt-o1-mini"
+    #model_choice = "gpt-4.1-nano"
+    model_choice = "o4-mini-2025-04-16"
     model_info = get_model_info(model_choice)
     model_provider = model_info.provider.value
     show_reasoning = False
