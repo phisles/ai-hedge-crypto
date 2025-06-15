@@ -115,8 +115,8 @@ AVAILABLE_MODELS = [
         provider=ModelProvider.OPENAI
     ),
     LLMModel(
-        display_name="[openai] gpt-o1-mini",
-        model_name="gpt-o1-mini",
+        display_name="[openai] o4-mini TEST 06-2025",
+        model_name="o4-mini-2025-04-16",
         provider=ModelProvider.OPENAI
     ),
     LLMModel(
