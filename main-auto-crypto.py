@@ -27,7 +27,7 @@ load_dotenv()
 sys.path.append("/root/stock2")
 
 
-from config2 import SAPCA_API_KEY_ID, SAPCA_API_SECRET_KEY
+
 from tools.api import COINGECKO_IDS
 
 import sys
