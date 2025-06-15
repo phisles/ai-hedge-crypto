@@ -132,9 +132,29 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
         elif latest["price_change_pct_30d"] > 0.10:
             score += 2
             details.append(f"Moderate 30d price momentum: {latest['price_change_pct_30d']:.2%}")
-        if latest.get("developer_stars", 0) > 50000:
+        dev_score = latest.get("developer_activity", 0)
+        commit_count = latest.get("developer_commit_count_4_weeks", 0)
+        community_score = (
+            (latest.get("reddit_subscribers", 0) or 0)
+            + (latest.get("telegram_channel_user_count", 0) or 0)
+            + (latest.get("twitter_followers", 0) or 0)
+        )
+
+        if dev_score > 60000 or commit_count > 1000:
             score += 2
-            details.append(f"High developer activity: {latest['developer_stars']} stars")
+            details.append(f"High dev activity: score={dev_score}, commits={commit_count}")
+        elif dev_score > 30000 or commit_count > 500:
+            score += 1
+            details.append(f"Moderate dev activity: score={dev_score}, commits={commit_count}")
+        else:
+            details.append(f"Low dev activity: score={dev_score}, commits={commit_count}")
+
+        if community_score > 500_000:
+            score += 1
+            details.append(f"Large community presence: {community_score:,}")
+        elif community_score > 100_000:
+            score += 0.5
+            details.append(f"Moderate community presence: {community_score:,}")
         normalized_score = (score / 5) * 5
         return {
             "score": normalized_score,

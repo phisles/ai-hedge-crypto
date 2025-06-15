@@ -90,10 +90,21 @@ def valuation_agent(state: AgentState):
         oe_score = 0.0 if owner_earnings_value == 0 or market_cap_onchain == 0 else (owner_earnings_value - market_cap_onchain) / market_cap_onchain
         dcf_score = 0.0 if dcf_value == 0 or market_cap_onchain == 0 else (dcf_value - market_cap_onchain) / market_cap_onchain
 
+        # Developer activity score
+        dev_score = 0.0
+        if dev_activity is not None:
+            if dev_activity > 60000:
+                dev_score = 0.25
+            elif dev_activity > 30000:
+                dev_score = 0.10
+            elif dev_activity < 10000:
+                dev_score = -0.10
+
         combined_score = (
-            (nvt_score) * 0.50
-            + oe_score * 0.25
-            + dcf_score * 0.25
+            (nvt_score) * 0.40
+            + oe_score * 0.20
+            + dcf_score * 0.20
+            + dev_score * 0.20
         )
 
         if combined_score > 0.15:

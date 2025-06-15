@@ -171,8 +171,8 @@ def create_workflow(selected_analysts=None):
 if __name__ == "__main__":
     # Configuration
     #tickers = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOT/USD"]
-    tickers = ["BTC/USD", "ETH/USD"]
-    #tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
+    #tickers = ["BTC/USD", "ETH/USD"]
+    tickers = [f"{symbol}/USD" for symbol in COINGECKO_IDS]
     
     
     #LIVE

@@ -324,7 +324,7 @@ def analyze_activism_potential(
             details.append("No 60d underperformance signal.")
         if isinstance(pct1y, (int, float)) and pct1y < 0:
             score += 1
-            details.append(f"Price down {pct1y*100:.1f}% over 1y (longer‐term malaise).")
+            details.append(f"Price down {pct1y:.1f}% over 1y (longer‐term malaise).")
         else:
             details.append("No 1y underperformance signal.")
     else:

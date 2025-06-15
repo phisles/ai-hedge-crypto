@@ -89,9 +89,9 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
             # Compose analysis_data dict
             analysis_input = {
                 "metrics": metrics,
-                "line_items": line_items,
-                "insider_trades": insider_trades,
-                "news": news,
+                "line_items": [li.__dict__ for li in line_items],
+                "insider_trades": [t.__dict__ for t in insider_trades],
+                "news": [n.__dict__ for n in news],
                 "market_cap": market_cap,
             }
             progress.update_status("michael_burry_agent", ticker, "Prepared equity data for LLM")
@@ -295,6 +295,7 @@ def _generate_burry_output(
 - Focus on downside risk first—avoid assets with excessive dilution or governance risk.
 - Look for hard catalysts: mainnet upgrades, protocol revenue growth, or large token burns.
 - Communicate in Burry’s terse, data-driven style.
+- Consider 24 h trading volume (`volume_24h`) and USD volume (`converted_volume_usd`) to gauge liquidity.
 
 When providing your reasoning, be thorough and specific by:
 1. Start with the key on-chain metric(s) that drove your decision (e.g., “NVT 30, vol/MC 5%”).
@@ -315,11 +316,11 @@ If bearish:
 {analysis_data}
 
 Return the trading signal exactly in this JSON format:
-{{{{
+{{
   \"signal\": \"bullish\" | \"bearish\" | \"neutral\",
   \"confidence\": float between 0 and 100,
   \"reasoning\": \"string\"
-}}}}"""
+}}"""
             ),
         ]
     )

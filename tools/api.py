@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import sys
 from openai import OpenAI
 import random
+import pprint
 import os
 import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -29,6 +30,11 @@ from data.models import (
     InsiderTrade,
     InsiderTradeResponse,
 )
+
+COINGECKO_HEADERS = {
+    "accept": "application/json",
+    "x-cg-demo-api-key": "CG-SohCK1ePBmQxyUdm29dSFWTA"
+}
 
 COINGECKO_IDS = {
     "AAVE": "aave",
@@ -67,9 +73,18 @@ _cache = get_cache()
 def fetch_with_retry(url, max_retries=20):
     for attempt in range(1, max_retries + 1):
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=COINGECKO_HEADERS, timeout=10)
             if response.status_code == 200:
-                return response.json()
+                import pprint
+                pp = pprint.PrettyPrinter(indent=2)
+                try:
+                    data = response.json()
+                    print("\n🌐 CoinGecko API response:")
+                    #pp.pprint(data)
+                    return data
+                except Exception as e:
+                    print(f"❌ Failed to parse JSON: {e}")
+                    return None
             elif response.status_code == 429:
                 if attempt == 1:
                     delay = random.uniform(80, 95)
@@ -282,6 +297,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
     deletions_4w         = changes_4w.get("deletions")
     activity_series_4w   = dev.get("last_4_weeks_commit_activity_series", [])
 
+
     # ─── Community data ───────────────────────────────────────────────────────────
     comm                 = cg.get("community_data", {}) or {}
     facebook_likes       = comm.get("facebook_likes")
@@ -408,6 +424,18 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         "code_additions_4_weeks":      additions_4w,
         "code_deletions_4_weeks":      deletions_4w,
         "activity_series_4_weeks":     activity_series_4w,
+        "developer_commit_count_4_weeks":     dev.get("commit_count_4_weeks"),
+        "developer_code_additions_4_weeks":   additions_4w,
+        "developer_code_deletions_4_weeks":   deletions_4w,
+        "developer_commit_activity_series":   activity_series_4w,
+        "developer_pr_contributors":          pr_contributors,
+        "developer_activity": (
+            (dev_stars or 0)
+            + (dev_forks or 0)
+            + (pr_contributors or 0)
+            + (dev.get("commit_count_4_weeks") or 0)
+        ),
+
         # Community data
         "facebook_likes":              facebook_likes,
         "twitter_followers":           twitter_followers,
@@ -416,6 +444,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         "reddit_comments_48h":         reddit_comments_48h,
         "reddit_accounts_active_48h":  reddit_active_48h,
         "telegram_channel_user_count": telegram_user_count,
+        "active_addresses_24h": reddit_active_48h or volume_24h,
         # Primary ticker & conversions
         "primary_last":                primary_last,
         "primary_volume":              primary_volume,
@@ -447,7 +476,7 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         # Derived ratios (with historical override)
         "price_to_sales_ratio":            market_cap / volume_24h if market_cap and volume_24h else None,
         "enterprise_value_to_revenue_ratio": ((fdv or market_cap) / volume_24h) if volume_24h else None,
-        "volume_to_market_cap":            hist_metrics.get("volume_to_market_cap", (volume_24h / market_cap if market_cap and volume_24h else None)),
+        "volume_to_market_cap": (volume_24h / market_cap) if market_cap and volume_24h else None,
         # Placeholders for non-applicable metrics
         "price_to_earnings_ratio":          "not applicable to crypto",
         "price_to_book_ratio":              "not applicable to crypto",
@@ -468,6 +497,8 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         print(f"✅ Metrics generated for {ticker}: {len(metrics[0].keys())} fields")
 
     _cache.set_financial_metrics(ticker, end_date, metrics)
+    
+    pprint.pprint(metrics[0], sort_dicts=False)
     return metrics
 
 def search_line_items(
