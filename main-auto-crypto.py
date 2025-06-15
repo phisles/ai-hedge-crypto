@@ -26,9 +26,17 @@ load_dotenv()
 # Ensure local modules path
 sys.path.append("/root/stock2")
 
-from config2 import GEM_API_KEY, GEM_API_SECRET  # Use your Gemini keys
-from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY
+
+from config2 import SAPCA_API_KEY_ID, SAPCA_API_SECRET_KEY
 from tools.api import COINGECKO_IDS
+
+import sys
+import types
+
+sys.path.append("/root/stock2")
+import config
+
+sys.modules["config2"] = config
 
 init(autoreset=True)
 TESTING_MODE = False  # Set to False in production
@@ -69,8 +77,8 @@ def get_gemini_portfolio():
 # NEW ALPACA PORTFOLIO FETCH
 def get_alpaca_portfolio():
     headers = {
-        "APCA-API-KEY-ID": APCA_API_KEY_ID,
-        "APCA-API-SECRET-KEY": APCA_API_SECRET_KEY,
+        "APCA-API-KEY-ID": SAPCA_API_KEY_ID,
+        "APCA-API-SECRET-KEY": SAPCA_API_SECRET_KEY,
     }
 
     # Fetch account summary

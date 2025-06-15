@@ -5,7 +5,15 @@ from dotenv import load_dotenv
 import csv
 import sys
 sys.path.append("/root/stock2")
-from config2 import APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL
+
+import sys
+import types
+
+sys.path.append("/root/stock2")
+import config
+
+sys.modules["config2"] = config
+from config2 import SAPCA_API_KEY_ID, SAPCA_API_SECRET_KEY, SAPCA_API_BASE_URL
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ORDER_FILE = os.path.join(SCRIPT_DIR, "order-data", "alpaca_crypto_order_output.json")
@@ -21,9 +29,9 @@ if not os.path.exists(CSV_LOG):
         writer = csv.writer(f)
         writer.writerow(["symbol", "json_side", "qty", "alpaca_side", "limit_price", "order_id", "status", "created_at"])
 
-API_KEY = APCA_API_KEY_ID
-API_SECRET = APCA_API_SECRET_KEY
-BASE_URL = APCA_API_BASE_URL
+API_KEY = SAPCA_API_KEY_ID
+API_SECRET = SAPCA_API_SECRET_KEY
+BASE_URL = SAPCA_API_BASE_URL
 
 headers = {
     "APCA-API-KEY-ID": API_KEY,
