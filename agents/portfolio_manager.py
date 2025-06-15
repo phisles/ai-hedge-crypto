@@ -139,7 +139,7 @@ def generate_trading_decision(
             - HOLD is appropriate if signals are mixed or neutral overall
             - SELL only if:
                 * You hold shares and majority of signals are clearly BEARISH
-            - Aim to act on high-confidence signals from agents like "Phil Fisher", "Michael Burry", or "Peter Lynch"
+            - Aim to act on high-confidence signals
 
               Inputs:
               - signals_by_ticker: dictionary of ticker → signals
