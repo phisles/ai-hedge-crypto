@@ -130,6 +130,11 @@ AVAILABLE_MODELS = [
         provider=ModelProvider.OPENAI
     ),
     LLMModel(
+        display_name="[openai] GPT 4.1 mini",
+        model_name="gpt-4.1-mini-2025-04-14",
+        provider=ModelProvider.OPENAI
+    ),
+    LLMModel(
         display_name="[openai] gpt-4.1-nano (cheapest OpenAI)",
         model_name="gpt-4.1-nano",
         provider=ModelProvider.OPENAI
