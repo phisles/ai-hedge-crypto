@@ -8,6 +8,10 @@ from typing_extensions import Literal
 from utils.progress import progress
 from utils.llm import call_llm
 
+import sys
+sys.path.append("/root/stock2")  # or wherever config.py lives
+from config import BUDGET_ALLOCATION_PERCENT
+
 
 class PortfolioDecision(BaseModel):
     action: Literal["buy", "sell", "hold"]
@@ -54,7 +58,13 @@ def portfolio_management_agent(state: AgentState):
             "long": 0,
             "short": 0,
         })
-
+        
+        raw_max = state["data"].get("max_shares", {}).get(ticker, {"long": 0, "short": 0})
+        price = current_prices.get(ticker, 1) or 1
+        usd_limit = portfolio.get("cash", 0) * BUDGET_ALLOCATION_PERCENT
+        adjusted_qty = min(raw_max["long"], usd_limit / price)
+        max_shares[ticker] = {"long": round(adjusted_qty, 8), "short": 0}
+        
         # Get signals for the ticker
         ticker_signals = {}
         for agent, signals in analyst_signals.items():
