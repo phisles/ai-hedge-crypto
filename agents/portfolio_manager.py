@@ -110,6 +110,7 @@ def generate_trading_decision(
 ) -> PortfolioManagerOutput:
     """Attempts to get a decision from the LLM with retry logic"""
     # Create the prompt template
+"""
     # Enforce strict SELL rule: require ≥5 bearish signals to sell
     for ticker, signals in signals_by_ticker.items():
         bearish_count = sum(1 for s in signals.values() if s["signal"] == "bearish")
@@ -166,93 +167,60 @@ def generate_trading_decision(
                     for t in tickers
                 }
             )
-            
+"""            
     template = ChatPromptTemplate.from_messages(
-        [
-            (
-              "system",
-              """You are a portfolio manager making final trading decisions based on multiple tickers.
-
-              Trading Rules:
-              - For long positions:
-                * Only buy if you have available cash
-                * Only sell if you currently hold long shares of that ticker
-                * Sell quantity must be ≤ current long position shares
-                * Buy quantity must be ≤ max_shares[ticker]["long"]
-              
-              - The max_shares values are pre-calculated to respect position limits
-              - Consider only long opportunities based on signals
-              - Maintain appropriate risk management with long exposure
-
-              Available Actions:
-              - "buy": Open or add to long position
-              - "sell": Close or reduce long position
-              - "hold": No action
-
-            Decision Rules:
-            Important: All decision logic below must be followed exactly. Do not make exceptions based on confidence, partial trends, or creative interpretation.
-            
-            BUY Rules (strict):
-            - Only consider BUY if BOTH of the following are true:
-              * At least 5 signals for the ticker are marked "bullish"
-              * The combined confidence of bullish signals is > 140
-            - If fewer than 5 bullish signals, you MUST return action = "hold" even if confidence is high
-            - If both conditions are met, allocate cash proportionally by relative confidence
-            HOLD is appropriate if signals are mixed or neutral overall
-            SELL Rules (strict):
-            - If you currently hold shares AND 5 or more signals are "bearish", you MUST return action = "sell"
-            - Do NOT override this rule based on confidence level
-            - If this condition is met, return quantity = current held position and reason = "Bearish majority signal"
-            
-            Aim to act on high-confidence signals, as a tie-breaker for HOLD cases or additional nuance in borderline BUYs.
-
-              Inputs:
-              - signals_by_ticker: dictionary of ticker → signals
-              - max_shares: maximum shares allowed per ticker
-              - portfolio_cash: current cash in portfolio
-              - portfolio_positions: current positions
-              - current_prices: current prices for each ticker
-              """,
-            ),
-            (
-              "human",
-              """Based on the team's analysis, make your trading decisions for each ticker.
-
-              Here are the signals by ticker:
-              {signals_by_ticker}
-
-              Current Prices:
-              {current_prices}
-
-              Maximum Shares Allowed For Purchases:
-              {max_shares}
-
-              Portfolio Cash: {portfolio_cash}
-              Current Positions: {portfolio_positions}
-
-              Relative Confidence Scores: {relative_confidence}
-
-              Output strictly in JSON with the following structure:
-              {{
-                "decisions": {{
-                  "TICKER1": {{
-                    "action": "buy/sell/hold",
-                    "quantity": float,
-                    "confidence": float between 0 and 100,
-                    "reasoning": "string"
-                  }},
-                  "TICKER2": {{
-                    ...
-                  }},
-                  ...
-                }}
-              }}
-              """,
-            ),
+        ("system",
+        """You are a portfolio manager making final trading decisions for a set of tickers.
+        
+        Your job is to choose the best action per ticker: 'buy', 'sell', or 'hold'.
+        
+        Use these guidelines:
+        
+        BUY:
+        - You may buy even if not all signals are bullish — a strong confidence from 1–2 agents can be enough.
+        - Use `max_shares[ticker]["long"]` as a ceiling for quantity.
+        - Adjust the quantity up or down based on confidence:
+          * Very confident (≥80): buy near max
+          * Moderate (50–80): buy partial
+          * Low confidence (30–50): small exploratory buy
+          * Very low (<30): usually avoid buying
+        
+        SELL:
+        - Be cautious with sells.
+        - Do **not** sell just because there is a bearish majority.
+        - Only sell if:
+          * Bearish signals are strong **and** confident, **and**
+          * You currently hold a position in that ticker.
+        - You can sell part or all of the position based on confidence:
+          * Strong: full exit
+          * Moderate: reduce size
+          * Weak: consider holding
+        
+        HOLD:
+        - Appropriate when signals are mixed or unclear.
+        - Also valid if confidence in buy/sell is low.
+        
+        ALWAYS:
+        - Factor in current portfolio positions when deciding.
+        - Use `portfolio_cash`, `portfolio_positions`, and `max_shares` responsibly.
+        - Explain your reasoning clearly.
+        
+        Output format:
+        {
+          "decisions": {
+            "TICKER": {
+              "action": "buy"|"sell"|"hold",
+              "quantity": float,
+              "confidence": float (0–100),
+              "reasoning": string
+            },
+            ...
+          }
+        }
+        """),
         ]
     )
 
-    # Generate the prompt
     # Generate the prompt
     relative_confidence = {
         ticker: sum(s["confidence"] for s in signals.values() if s["signal"] == "bullish")
