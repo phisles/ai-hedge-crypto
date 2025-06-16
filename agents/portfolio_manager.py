@@ -148,7 +148,7 @@ def generate_trading_decision(
     - Use `portfolio_cash`, `portfolio_positions`, and `max_shares` responsibly.
     - Explain your reasoning clearly.
     
-    Output format:
+    Output format (respond only with valid JSON):
     {{  
       "decisions": {{  
         "TICKER": {{  
@@ -160,6 +160,8 @@ def generate_trading_decision(
         ...
       }}
     }}
+    
+    Respond only with a valid JSON object.
     """)
     ])
 
