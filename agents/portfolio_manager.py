@@ -130,13 +130,16 @@ Your job is to choose the best action per ticker: 'buy', 'sell', or 'hold'.
 Use these guidelines:
 
 BUY:
-- You may buy even if not all signals are bullish — a strong confidence from 1–2 agents can be enough.
-- Use `max_shares[ticker]["long"]` as a ceiling for quantity.
-- Adjust the quantity up or down based on confidence:
-  * Very confident (≥80): buy near max
-  * Moderate (50–80): buy partial
-  * Low confidence (30–50): small exploratory buy
-  * Very low (<30): usually avoid buying
+- Only buy if there is meaningful bullish support:
+  * At least **3 bullish agents with confidence ≥60**, or
+  * Relative bullish confidence is ≥150 and there are **no more than 1 strong bearish signal** (confidence ≥70).
+- Mixed signals (many neutral + 3–4 bullish) should result in **small exploratory buys or holds**, not strong buys.
+- Use `max_shares[ticker]["long"]` as a ceiling.
+- Adjust quantity based on confidence:
+  * ≥85: buy up to 75–100% of max
+  * 70–85: buy up to 50%
+  * 55–70: small exploratory buy (≤25%)
+  * <55: avoid unless no better candidates exist
 
 SELL:
 - Be cautious with sells.
