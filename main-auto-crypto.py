@@ -246,7 +246,6 @@ if __name__ == "__main__":
     
     #TEST
     #selected_analysts = ["ben_graham"]
-    #model_choice = "gpt-4o"
     model_choice = "gpt-4.1-nano"
     #model_choice = "gpt-4.1-mini-2025-04-14"
     model_info = get_model_info(model_choice)
