@@ -133,10 +133,15 @@ def generate_trading_decision(
               - "hold": No action
 
             Decision Rules:
-            - Prioritize BUY if:
-                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 5 bullish signals
-                * Divide available cash across all qualified tickers, based on relative confidence score
-            - HOLD is appropriate if signals are mixed or neutral overall
+            Important: All decision logic below must be followed exactly. Do not make exceptions based on confidence, partial trends, or creative interpretation.
+            
+            BUY Rules (strict):
+            - Only consider BUY if BOTH of the following are true:
+              * At least 5 signals for the ticker are marked "bullish"
+              * The combined confidence of bullish signals is > 140
+            - If fewer than 5 bullish signals, you MUST return action = "hold" even if confidence is high
+            - If both conditions are met, allocate cash proportionally by relative confidence
+            HOLD is appropriate if signals are mixed or neutral overall
             SELL Rules (strict):
             - If you currently hold shares AND 5 or more signals are "bearish", you MUST return action = "sell"
             - Do NOT override this rule based on confidence level
