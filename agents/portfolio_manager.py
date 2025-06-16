@@ -109,117 +109,59 @@ def generate_trading_decision(
     model_provider: str,
 ) -> PortfolioManagerOutput:
     """Attempts to get a decision from the LLM with retry logic"""
-    # Create the prompt template
-"""
-    # Enforce strict SELL rule: require ≥5 bearish signals to sell
-    for ticker, signals in signals_by_ticker.items():
-        bearish_count = sum(1 for s in signals.values() if s["signal"] == "bearish")
-        if bearish_count >= 8:
-            return PortfolioManagerOutput(
-                decisions={
-                    t: PortfolioDecision(
-                        action="sell",
-                        quantity=portfolio["positions"].get(ticker, {}).get("long", 0),
-                        confidence=sum(
-                            s["confidence"]
-                            for s in signals_by_ticker[t].values()
-                            if s["signal"] == "bearish"
-                        ),
-                        reasoning=f"{bearish_count} bearish signals (>=5), sell full position"
-                    )
-                    for t in tickers
-                }
-            )
-    # Enforce strict BUY rule: require at least 5 bullish signals
-    for ticker, signals in signals_by_ticker.items():
-        bullish_count = sum(1 for s in signals.values() if s["signal"] == "bullish")
-        if bullish_count < 4:
-            return PortfolioManagerOutput(
-                decisions={
-                    t: PortfolioDecision(
-                        action="hold",
-                        quantity=0.0,
-                        confidence=sum(
-                            s["confidence"]
-                            for s in signals_by_ticker[t].values()
-                            if s["signal"] == "bullish"
-                        ),
-                        reasoning=f"Only {bullish_count} bullish signals (<5), hold"
-                    )
-                    for t in tickers
-                }
-            )
 
-
-    # Enforce HOLD default when neither BUY nor SELL rules are met
-    for ticker, signals in signals_by_ticker.items():
-        bull_count = sum(1 for s in signals.values() if s["signal"] == "bullish")
-        bear_count = sum(1 for s in signals.values() if s["signal"] == "bearish")
-        if bull_count < 4 and bear_count < 8:
-            return PortfolioManagerOutput(
-                decisions={
-                    t: PortfolioDecision(
-                        action="hold",
-                        quantity=0.0,
-                        confidence=0.0,
-                        reasoning="Does not meet BUY or SELL rules, hold"
-                    )
-                    for t in tickers
-                }
-            )
-"""            
-    template = ChatPromptTemplate.from_messages(
+    # Create the prompt template           
+    template = ChatPromptTemplate.from_messages([
         ("system",
         """You are a portfolio manager making final trading decisions for a set of tickers.
-        
-        Your job is to choose the best action per ticker: 'buy', 'sell', or 'hold'.
-        
-        Use these guidelines:
-        
-        BUY:
-        - You may buy even if not all signals are bullish — a strong confidence from 1–2 agents can be enough.
-        - Use `max_shares[ticker]["long"]` as a ceiling for quantity.
-        - Adjust the quantity up or down based on confidence:
-          * Very confident (≥80): buy near max
-          * Moderate (50–80): buy partial
-          * Low confidence (30–50): small exploratory buy
-          * Very low (<30): usually avoid buying
-        
-        SELL:
-        - Be cautious with sells.
-        - Do **not** sell just because there is a bearish majority.
-        - Only sell if:
-          * Bearish signals are strong **and** confident, **and**
-          * You currently hold a position in that ticker.
-        - You can sell part or all of the position based on confidence:
-          * Strong: full exit
-          * Moderate: reduce size
-          * Weak: consider holding
-        
-        HOLD:
-        - Appropriate when signals are mixed or unclear.
-        - Also valid if confidence in buy/sell is low.
-        
-        ALWAYS:
-        - Factor in current portfolio positions when deciding.
-        - Use `portfolio_cash`, `portfolio_positions`, and `max_shares` responsibly.
-        - Explain your reasoning clearly.
-        
-        Output format:
-        {
-          "decisions": {
-            "TICKER": {
-              "action": "buy"|"sell"|"hold",
-              "quantity": float,
-              "confidence": float (0–100),
-              "reasoning": string
-            },
-            ...
-          }
-        }
-        """),
-        ]
-    )
+
+Your job is to choose the best action per ticker: 'buy', 'sell', or 'hold'.
+
+Use these guidelines:
+
+BUY:
+- You may buy even if not all signals are bullish — a strong confidence from 1–2 agents can be enough.
+- Use `max_shares[ticker]["long"]` as a ceiling for quantity.
+- Adjust the quantity up or down based on confidence:
+  * Very confident (≥80): buy near max
+  * Moderate (50–80): buy partial
+  * Low confidence (30–50): small exploratory buy
+  * Very low (<30): usually avoid buying
+
+SELL:
+- Be cautious with sells.
+- Do **not** sell just because there is a bearish majority.
+- Only sell if:
+  * Bearish signals are strong **and** confident, **and**
+  * You currently hold a position in that ticker.
+- You can sell part or all of the position based on confidence:
+  * Strong: full exit
+  * Moderate: reduce size
+  * Weak: consider holding
+
+HOLD:
+- Appropriate when signals are mixed or unclear.
+- Also valid if confidence in buy/sell is low.
+
+ALWAYS:
+- Factor in current portfolio positions when deciding.
+- Use `portfolio_cash`, `portfolio_positions`, and `max_shares` responsibly.
+- Explain your reasoning clearly.
+
+Output format:
+{
+  "decisions": {
+    "TICKER": {
+      "action": "buy"|"sell"|"hold",
+      "quantity": float,
+      "confidence": float (0–100),
+      "reasoning": string
+    },
+    ...
+  }
+}
+""")
+    ])
 
     # Generate the prompt
     relative_confidence = {
