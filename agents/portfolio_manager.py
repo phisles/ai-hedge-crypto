@@ -61,7 +61,7 @@ def portfolio_management_agent(state: AgentState):
         
         raw_max = state["data"].get("max_shares", {}).get(ticker, {"long": 0, "short": 0})
         price = current_prices.get(ticker, 1) or 1
-        usd_limit = portfolio.get("cash", 0) * BUDGET_ALLOCATION_PERCENT
+        usd_limit = portfolio.get("cash", 0) * BUDGET_ALLOCATION_PERCENT * 10
         adjusted_qty = min(raw_max["long"], usd_limit / price)
         max_shares[ticker] = {"long": round(adjusted_qty, 8), "short": 0}
         
