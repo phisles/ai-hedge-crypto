@@ -113,7 +113,7 @@ def generate_trading_decision(
     # Enforce strict SELL rule: require ≥5 bearish signals to sell
     for ticker, signals in signals_by_ticker.items():
         bearish_count = sum(1 for s in signals.values() if s["signal"] == "bearish")
-        if bearish_count >= 5:
+        if bearish_count >= 8:
             return PortfolioManagerOutput(
                 decisions={
                     t: PortfolioDecision(
@@ -132,7 +132,7 @@ def generate_trading_decision(
     # Enforce strict BUY rule: require at least 5 bullish signals
     for ticker, signals in signals_by_ticker.items():
         bullish_count = sum(1 for s in signals.values() if s["signal"] == "bullish")
-        if bullish_count < 5:
+        if bullish_count < 4:
             return PortfolioManagerOutput(
                 decisions={
                     t: PortfolioDecision(
@@ -154,7 +154,7 @@ def generate_trading_decision(
     for ticker, signals in signals_by_ticker.items():
         bull_count = sum(1 for s in signals.values() if s["signal"] == "bullish")
         bear_count = sum(1 for s in signals.values() if s["signal"] == "bearish")
-        if bull_count < 5 and bear_count < 5:
+        if bull_count < 4 and bear_count < 8:
             return PortfolioManagerOutput(
                 decisions={
                     t: PortfolioDecision(
