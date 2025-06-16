@@ -134,12 +134,15 @@ def generate_trading_decision(
 
             Decision Rules:
             - Prioritize BUY if:
-                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 3 bullish signals
+                * Allocate cash proportionally to all BUY candidates with combined confidence > 140 and at least 5 bullish signals
                 * Divide available cash across all qualified tickers, based on relative confidence score
             - HOLD is appropriate if signals are mixed or neutral overall
-            - SELL only if:
-                * You hold shares and majority of signals are clearly BEARISH
-            - Aim to act on high-confidence signals
+            SELL Rules (strict):
+            - If you currently hold shares AND 5 or more signals are "bearish", you MUST return action = "sell"
+            - Do NOT override this rule based on confidence level
+            - If this condition is met, return quantity = current held position and reason = "Bearish majority signal"
+            
+            Aim to act on high-confidence signals, as a tie-breaker for HOLD cases or additional nuance in borderline BUYs.
 
               Inputs:
               - signals_by_ticker: dictionary of ticker → signals
