@@ -250,7 +250,7 @@ if __name__ == "__main__":
     #model_choice = "gpt-4o"
     #find GPT-4o mini
     #model_choice = "gpt-4.1-nano"
-    model_choice = "o4-mini-2025-04-16"
+    model_choice = "gpt-4.1-mini-2025-04-14"
     model_info = get_model_info(model_choice)
     model_provider = model_info.provider.value
     show_reasoning = False
