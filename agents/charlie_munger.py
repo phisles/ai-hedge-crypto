@@ -430,7 +430,7 @@ def analyze_predictability(financial_line_items: list) -> dict:
     
     if revenues and len(revenues) >= 5:
         # Calculate year-over-year growth rates
-        growth_rates = [(revenues[i] / revenues[i+1] - 1) for i in range(len(revenues)-1)]
+        growth_rates = [(revenues[i] / revenues[i+1] - 1) if revenues[i+1] != 0 else 0.0 for i in range(len(revenues)-1)]
         
         avg_growth = sum(growth_rates) / len(growth_rates)
         growth_volatility = sum(abs(r - avg_growth) for r in growth_rates) / len(growth_rates)
