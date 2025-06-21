@@ -65,7 +65,6 @@ def phil_fisher_agent(state: AgentState):
                 },
                 "onchain_valuation": {
                     "volume_to_market_cap": latest.get("volume_to_market_cap", 0.0),
-                    "developer_stars": latest.get("developer_stars", 0),
                 },
                 "community_sentiment": {
                     "sentiment_votes_up_pct": latest.get("sentiment_votes_up_pct", None)
@@ -464,7 +463,7 @@ def generate_fisher_output(
 
 1. Emphasize long-term growth potential via 1-year price change.
 2. Assess momentum stability with 30-day price trends.
-3. Evaluate developer activity as a proxy for management quality and R&D.
+3. Evaluate price stability and fundamental growth.
 4. Use volume-to-market-cap as a simple valuation signal.
 5. Include community sentiment (positive vote percentage) as a check.
 6. Be willing to pay a premium for quality but remain mindful of valuation.
