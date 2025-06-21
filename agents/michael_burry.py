@@ -61,7 +61,6 @@ def michael_burry_agent(state: AgentState):  # noqa: C901
             analysis_input = {
                 "price_change_pct_1y": latest.get("price_change_pct_1y", 0.0),
                 "sentiment_votes_up_pct": latest.get("sentiment_votes_up_pct", 0.0),
-                "developer_stars": latest.get("developer_stars", 0),
                 "market_cap": latest.get("market_cap"),
                 "volume_24h": latest.get("volume_24h"),
                 "converted_volume_usd": latest.get("converted_volume_usd"),
@@ -299,7 +298,7 @@ def _generate_burry_output(
 
 When providing your reasoning, be thorough and specific by:
 1. Start with the key on-chain metric(s) that drove your decision (e.g., “NVT 30, vol/MC 5%”).
-2. Cite concrete numbers (e.g., “1y price change −12.3%”, “developer stars 45k”).
+2. Cite concrete numbers (e.g., “1y price change −12.3%”, “volume/MC 6%”).
 3. Highlight risk factors and why they may be acceptable (or not) in a contrarian context.
 4. Mention relevant community or protocol events (e.g., “50k negative headlines; contrarian buy”).
 5. Use Burry’s direct, number-focused communication style with minimal words.
