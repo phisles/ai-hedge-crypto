@@ -208,23 +208,15 @@ def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     latest = metrics[0]
     if isinstance(latest, dict):
         ps_ratio  = latest.get("price_to_sales_ratio")
-        dev_stars = latest.get("developer_stars")
+
     else:
         ps_ratio  = getattr(latest, "price_to_sales_ratio", None)
-        dev_stars = getattr(latest, "developer_stars", None)
 
     if isinstance(ps_ratio, (int, float)) and ps_ratio < 50:
         score += 1
         details.append(f"Healthy price-to-sales ratio: {ps_ratio:.2f}")
     else:
         details.append("No P/S data or ratio is too high.")
-
-    # Developer activity
-    if isinstance(dev_stars, (int, float)) and dev_stars > 5000:
-        score += 1
-        details.append(f"Strong developer support: {dev_stars} GitHub stars.")
-    else:
-        details.append("Weak or unknown developer activity.")
 
     # 4. (Optional) Brand Intangible (if intangible_assets are fetched)
     # intangible_vals = [getattr(item, "intangible_assets", 0) for item in financial_line_items]
@@ -416,9 +408,8 @@ def generate_ackman_output(
             6. Focus on a few high-conviction ideas where value can be unlocked.
 
             In your reasoning:
-            - Emphasize strong network effects, developer activity, and real-world usage.
+
             - Review supply inflation, price trends, and volume-to-market-cap ratios as indicators of sustainability.
-            - Use GitHub activity and release momentum to gauge development health.
             - Avoid or penalize excessive volatility, centralized control, or unclear utility.
             - Provide a valuation assessment with quantitative support (e.g., P/S ratio, liquidity, market dominance).
             - Identify any catalysts like protocol upgrades, exchange listings, or upcoming ecosystem expansions.
