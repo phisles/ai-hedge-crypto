@@ -71,8 +71,8 @@ def warren_buffett_agent(state: AgentState):
             margin_of_safety = (40 - nvt_ratio) / nvt_ratio
 
         # Composite scoring
-        total_score = fundamental["score"] + consistency["score"] + moat["score"] + management["score"]
-        max_score = fundamental.get("max_score", 10) + consistency.get("max_score", 2) + moat.get("max_score", 3) + management.get("max_score", 2)
+        total_score = fundamental["score"] + consistency["score"] + management["score"]
+        max_score = fundamental.get("max_score", 10) + consistency.get("max_score", 2) + management.get("max_score", 2)
 
         # Determine signal
         if total_score >= 0.7 * max_score and margin_of_safety is not None and margin_of_safety >= 0.3:
@@ -146,13 +146,6 @@ def analyze_fundamentals(metrics: dict) -> dict:
     else:
         details.append("No address growth data")
 
-    # Developer activity
-    da = metrics.get("developer_activity")
-    if da and da >= 50:
-        score += 2
-        details.append(f"Strong dev activity {da}")
-    else:
-        details.append("Weak dev activity")
 
     return {"score": score, "max_score": 10, "details": "; ".join(details), "metrics": metrics}
 
@@ -212,8 +205,8 @@ def generate_buffett_output(
             """You are a crypto-adapted Warren Buffett AI, making decisions on digital assets using these principles:
 - Circle of Competence: Only invest in protocols you understand (tokenomics, use-cases, tech stack)
 - Margin of Safety: Require a significant discount to intrinsic or network-value metrics (e.g. NVT)
-- Economic Moat: Seek durable network effects, high active-address growth, and strong developer activity
-- Quality Management: Value strong, transparent development teams and governance
+- Economic Moat: Seek durable network effects and high active-address growth
+- Quality Management: Value clear tokenomics and low inflation
 - Financial Strength: Favor tokens with low inflation rates and attractive staking yields
 - Long-term Horizon: Hold assets for network maturation, not just price swings
 - Sell only if on-chain fundamentals deteriorate, tokenomics break down, or valuation far exceeds intrinsic value
