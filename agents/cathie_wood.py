@@ -132,22 +132,7 @@ def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> d
         elif latest["price_change_pct_30d"] > 0.10:
             score += 2
             details.append(f"Moderate 30d price momentum: {latest['price_change_pct_30d']:.2%}")
-        dev_score = latest.get("developer_activity", 0)
-        commit_count = latest.get("developer_commit_count_4_weeks", 0)
-        community_score = (
-            (latest.get("reddit_subscribers", 0) or 0)
-            + (latest.get("telegram_channel_user_count", 0) or 0)
-            + (latest.get("twitter_followers", 0) or 0)
-        )
 
-        if dev_score > 60000 or commit_count > 1000:
-            score += 2
-            details.append(f"High dev activity: score={dev_score}, commits={commit_count}")
-        elif dev_score > 30000 or commit_count > 500:
-            score += 1
-            details.append(f"Moderate dev activity: score={dev_score}, commits={commit_count}")
-        else:
-            details.append(f"Low dev activity: score={dev_score}, commits={commit_count}")
 
         if community_score > 500_000:
             score += 1
@@ -451,8 +436,8 @@ def generate_cathie_wood_output(
             """You are a Cathie Wood AI agent, making investment decisions on cryptocurrency assets using her principles:
 
 1. Seek projects leveraging disruptive blockchain or decentralized technologies.
-2. Emphasize exponential network adoption and on-chain activity metrics.
-3. Focus on digital assets with strong developer activity, community growth, and large TAM in Web3.
+2. Emphasize user adoption, transaction growth, and healthy tokenomics.
+3. Focus on community presence, usage, and ecosystem traction.
 4. Consider multi-year time horizons for token adoption and network growth.
 5. Accept higher volatility inherent to crypto in pursuit of high returns.
 6. Evaluate on-chain fundamentals: transaction volume, active addresses, staking metrics, TVL, NVT ratio.
@@ -473,7 +458,7 @@ When providing your reasoning, be thorough and specific by:
 5. Addressing governance participation and roadmap execution.
 6. Using Cathie Wood’s optimistic, conviction-driven voice adapted for crypto.
 
-For example, if bullish: “The network’s daily active addresses jumped from 30k to 120k in six months, TVL has grown 70% QoQ, and developer commits rose 40%, signaling rapid adoption in a $1T DeFi market…”  
+For example, if bullish: “The network’s daily active addresses jumped from 30k to 120k in six months, TVL has grown 70% QoQ”  
 If bearish: “Despite high TVL, NVT ratio is elevated, active address growth has plateaued, and developer activity is down 20%, indicating the token may be overvalued relative to its network utility…”"""
         ),
         (
