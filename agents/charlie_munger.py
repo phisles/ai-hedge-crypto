@@ -660,7 +660,7 @@ def generate_munger_output(
 8. Use mental models to invert and avoid mistakes.
 
 Rules:
-- Highlight network moat indicators (volume/market-cap, dev activity).
+- Highlight network moat indicators (volume/market-cap, etc).
 - Assess community sentiment metrics (upvotes, followers).
 - Evaluate tokenomics: supply caps, dilution risk.
 - Consider news sentiment: positive vs negative coverage.
