@@ -438,27 +438,22 @@ def get_financial_metrics(ticker: str, end_date: str) -> list[dict]:
         "roi_currency":                roi_currency,
         "roi_percentage":              roi_pct,
         # Developer data
-        "developer_forks":             dev_forks,
-        "developer_stars":             dev_stars,
-        "developer_subscribers":       dev_subscribers,
-        "developer_total_issues":      dev_total_issues,
-        "developer_closed_issues":     dev_closed_issues,
-        "developer_pr_merged":         dev_pr_merged,
-        "pr_contributors":             pr_contributors,
-        "code_additions_4_weeks":      additions_4w,
-        "code_deletions_4_weeks":      deletions_4w,
-        "activity_series_4_weeks":     activity_series_4w,
-        "developer_commit_count_4_weeks":     dev.get("commit_count_4_weeks"),
-        "developer_code_additions_4_weeks":   additions_4w,
-        "developer_code_deletions_4_weeks":   deletions_4w,
-        "developer_commit_activity_series":   activity_series_4w,
-        "developer_pr_contributors":          pr_contributors,
-        "developer_activity": (
-            (dev_stars or 0)
-            + (dev_forks or 0)
-            + (pr_contributors or 0)
-            + (dev.get("commit_count_4_weeks") or 0)
-        ),
+        "developer_forks":             "IGNORE",
+        "developer_stars":             "IGNORE",
+        "developer_subscribers":       "IGNORE",
+        "developer_total_issues":      "IGNORE",
+        "developer_closed_issues":     "IGNORE",
+        "developer_pr_merged":         "IGNORE",
+        "pr_contributors":             "IGNORE",
+        "code_additions_4_weeks":      "IGNORE",
+        "code_deletions_4_weeks":      "IGNORE",
+        "activity_series_4_weeks":     "IGNORE",
+        "developer_commit_count_4_weeks":     "IGNORE",
+        "developer_code_additions_4_weeks":   "IGNORE",
+        "developer_code_deletions_4_weeks":   "IGNORE",
+        "developer_commit_activity_series":   "IGNORE",
+        "developer_pr_contributors":          "IGNORE",
+        "developer_activity":                 "IGNORE",
 
         # Community data
         "facebook_likes":              facebook_likes,
