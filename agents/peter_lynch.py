@@ -50,7 +50,6 @@ def peter_lynch_agent(state: AgentState):
             price_30d = latest.get("price_change_pct_30d", 0.0)
             sentiment_data = analyze_crypto_sentiment_from_metrics(latest)
             vol_mc = latest.get("volume_to_market_cap", 0.0)
-            dev_stars = latest.get("developer_stars", 0)
 
             # -- Optional enhancements
             try:
@@ -97,8 +96,6 @@ def peter_lynch_agent(state: AgentState):
             if vol_mc is not None and vol_mc > 0.03:
                 score += 1
 
-            if dev_stars is not None and dev_stars > 30000:
-                score += 1
 
             if score >= 4:
                 signal = "bullish"
@@ -194,7 +191,7 @@ def generate_lynch_output(
     2. Growth at a Reasonable Price: prioritize on-chain growth (e.g. users, devs, TVL).
     3. Seek 'Ten-Baggers': identify high-potential assets with small market caps and strong momentum.
     4. Avoid complexity: penalize excessive inflation, broken tokenomics, or hype-based pricing.
-    5. Use community sentiment and developer activity as supporting evidence.
+    5. Use community sentiment and liquidity as supporting evidence.
     6. Be direct and use clear language with reasoning grounded in data.
     7. Conclude with a clear stance: bullish, bearish, or neutral.
 
